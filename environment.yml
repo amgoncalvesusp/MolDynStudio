@@ -1,0 +1,29 @@
+name: moldynstudio
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - gromacs=2024.1
+  - ambertools=23
+  - gmx_mmpbsa
+  - mdanalysis
+  - mdtraj
+  - prody
+  - pytraj
+  - matplotlib
+  - seaborn
+  - numpy
+  - pandas
+  - scipy
+  - pyqt5
+  - pyqtgraph
+  - qtwebengine
+  - nglview
+  - openpyxl
+  - cairosvg
+  - pip:
+      - py3dmol
+      - acpype
+

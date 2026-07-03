@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MolDynStudio — Arquitetura & Funcionamento</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-2: #7ee787;
+    --warn: #f0883e;
+    --danger: #f85149;
+    --wsl: #d29922;
+    --win: #58a6ff;
+    --grom: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    padding: 32px 48px;
+    background: linear-gradient(135deg, #1f6feb22, #bc8cff22);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.3px; }
+  header p { margin: 0; color: var(--muted); }
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; gap: 4px;
+    padding: 10px 48px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  nav a {
+    color: var(--muted); text-decoration: none;
+    padding: 6px 12px; border-radius: 6px;
+    font-size: 14px; transition: all 0.15s;
+  }
+  nav a:hover { color: var(--text); background: var(--panel); }
+  main { max-width: 1200px; margin: 0 auto; padding: 32px 48px 80px; }
+  section { margin-bottom: 56px; }
+  h2 {
+    font-size: 22px; margin: 0 0 16px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 17px; color: var(--accent); margin: 24px 0 8px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px; margin: 14px 0;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 720px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    main { padding: 24px 20px 60px; }
+    header { padding: 24px 20px; }
+    nav { padding: 10px 20px; }
+  }
+  code, pre {
+    font-family: "JetBrains Mono", "Consolas", monospace;
+    font-size: 13px;
+  }
+  code {
+    background: var(--panel-2); padding: 2px 6px;
+    border-radius: 4px; color: var(--accent-2);
+  }
+  pre {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px;
+    overflow-x: auto; margin: 8px 0;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th, td {
+    text-align: left; padding: 10px 12px;
+    border-bottom: 1px solid var(--border); font-size: 14px;
+  }
+  th { color: var(--muted); font-weight: 600; }
+  .badge {
+    display: inline-block; padding: 2px 10px;
+    border-radius: 999px; font-size: 11px;
+    font-weight: 600; letter-spacing: 0.3px;
+  }
+  .b-win { background: #1f6feb33; color: var(--win); border: 1px solid #1f6feb55; }
+  .b-wsl { background: #d2992233; color: var(--wsl); border: 1px solid #d2992255; }
+  .b-grom { background: #bc8cff33; color: var(--grom); border: 1px solid #bc8cff55; }
+  .b-ok { background: #2ea04333; color: var(--accent-2); border: 1px solid #2ea04355; }
+
+  .arch {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; overflow-x: auto;
+  }
+  .layer { border-radius: 10px; padding: 16px; margin: 12px 0; border: 1px solid; }
+  .layer-win { background: #1f6feb15; border-color: #1f6feb55; }
+  .layer-bridge { background: #f0883e15; border-color: #f0883e55; }
+  .layer-wsl { background: #d2992215; border-color: #d2992255; }
+  .layer-title {
+    font-weight: 600; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .nodes { display: flex; gap: 10px; flex-wrap: wrap; }
+  .node {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+    font-size: 13px; flex: 1 1 180px; min-width: 180px;
+  }
+  .node b { display: block; color: var(--accent); margin-bottom: 4px; }
+  .node small { color: var(--muted); }
+  .arrow { text-align: center; color: var(--warn); font-size: 20px; margin: 2px 0; }
+
+  .flow-step {
+    display: grid; grid-template-columns: 50px 1fr;
+    gap: 14px; align-items: start;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+  }
+  .flow-step:last-child { border-bottom: none; }
+  .flow-num {
+    background: var(--accent); color: var(--bg);
+    border-radius: 50%; width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+  }
+  .flow-body b { color: var(--accent-2); }
+
+  .pipeline { display: flex; gap: 8px; overflow-x: auto; padding: 12px 0; }
+  .pipe-step {
+    flex: 0 0 auto; background: var(--panel-2);
+    border: 1px solid var(--border); border-left: 3px solid var(--grom);
+    border-radius: 6px; padding: 10px 14px;
+    min-width: 130px; font-size: 13px;
+  }
+  .pipe-step b { color: var(--grom); display: block; margin-bottom: 2px; }
+  .pipe-arrow { align-self: center; color: var(--muted); font-size: 18px; }
+
+  footer {
+    text-align: center; color: var(--muted);
+    font-size: 12px; padding: 24px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>MolDynStudio</h1>
+  <p>GUI nativa Windows (PyQt5) + GROMACS rodando em WSL2 via bridge. Arquitetura, fluxo de execução e componentes.</p>
+</header>
+
+<nav>
+  <a href="#overview">Visão geral</a>
+  <a href="#arch">Arquitetura</a>
+  <a href="#flow">Fluxo do usuário</a>
+  <a href="#bridge">WSL Bridge</a>
+  <a href="#pipeline">Pipeline GROMACS</a>
+  <a href="#modules">Módulos</a>
+  <a href="#build">Build & Deploy</a>
+  <a href="#stack">Stack</a>
+</nav>
+
+<main>
+
+<section id="overview">
+<h2>1. Visão geral</h2>
+<p>MolDynStudio simula dinâmica molecular de complexos proteína-ligante. A GUI roda nativa no Windows; o motor (GROMACS, AmberTools, MMPBSA, MDAnalysis, MDTraj) roda dentro do WSL2. Tudo é distribuído como <code>MolDynStudio.exe</code> autocontido (PyInstaller <code>--onefile</code>).</p>
+
+<div class="grid-3">
+  <div class="panel">
+    <h3>Front-end</h3>
+    <span class="badge b-win">Windows nativo</span>
+    <p>PyQt5 + matplotlib. Tabs: Project / MD Setup / MD Run / Analysis. Zero dependência conda no host.</p>
+  </div>
+  <div class="panel">
+    <h3>Bridge</h3>
+    <span class="badge b-wsl">WSL2</span>
+    <p><code>core/wsl_bridge.py</code> embrulha cada comando como <code>wsl.exe -- bash -lc "conda run -n moldynstudio &lt;cmd&gt;"</code>.</p>
+  </div>
+  <div class="panel">
+    <h3>Back-end</h3>
+    <span class="badge b-grom">Linux/Ubuntu</span>
+    <p>Conda env <code>moldynstudio</code> com GROMACS, AmberTools, gmx_MMPBSA, MDAnalysis, MDTraj, ProDy.</p>
+  </div>
+</div>
+</section>
+
+<section id="arch">
+<h2>2. Arquitetura em camadas</h2>
+
+<div class="arch">
+
+  <div class="layer layer-win">
+    <div class="layer-title"><span class="badge b-win">Windows host</span> Camada GUI (PyQt5)</div>
+    <div class="nodes">
+      <div class="node"><b>MolDynStudio.exe</b><small>PyInstaller onefile · 64 MB · Python + Qt embutidos</small></div>
+      <div class="node"><b>main.py</b><small>Entry point · roda SetupWizard, depois GUI</small></div>
+      <div class="node"><b>setup_wizard.py</b><small>Launcher dashboard · checks WSL/conda/gmx + botão Begin</small></div>
+      <div class="node"><b>gromacs_analysis_studio_v11.py</b><small>MainWindow + 4 tabs</small></div>
+      <div class="node"><b>tabs/</b><small>md_setup_tab · md_run_tab · analysis_tab</small></div>
+      <div class="node"><b>windows/</b><small>mdp_editor · mmpbsa_dialog · plot_window · trajectory_viewer</small></div>
+    </div>
+  </div>
+
+  <div class="arrow">&#x21C5;</div>
+
+  <div class="layer layer-bridge">
+    <div class="layer-title"><span class="badge b-wsl">Bridge</span> Tradutor de comandos Windows &harr; WSL</div>
+    <div class="nodes">
+      <div class="node"><b>core/wsl_bridge.py</b><small><code>_wrap()</code> · <code>run()</code> · <code>popen()</code> · <code>gmx()</code></small></div>
+      <div class="node"><b>Path translation</b><small><code>win_to_wsl("C:\\&hellip;")</code> &rarr; <code>/mnt/c/&hellip;</code></small></div>
+      <div class="node"><b>Health checks</b><small><code>check_wsl_available()</code> · <code>check_conda_env()</code> · <code>check_gmx()</code></small></div>
+      <div class="node"><b>Workers (QThread)</b><small>SystemPrepWorker · LigandParamWorker · GROMACSRunner</small></div>
+    </div>
+  </div>
+
+  <div class="arrow">&#x21C5;</div>
+
+  <div class="layer layer-wsl">
+    <div class="layer-title"><span class="badge b-grom">WSL2 / Ubuntu 22.04</span> Camada de motor científico</div>
+    <div class="nodes">
+      <div class="node"><b>conda env <code>moldynstudio</code></b><small>~3 GB · criada de <code>environment.yml</code></small></div>
+      <div class="node"><b>GROMACS</b><small>gmx pdb2gmx · editconf · solvate · grompp · genion · mdrun</small></div>
+      <div class="node"><b>AmberTools + ACPYPE</b><small>Parametrização ligando · AM1-BCC/RESP</small></div>
+      <div class="node"><b>gmx_MMPBSA</b><small>Energia de ligação &Delta;G</small></div>
+      <div class="node"><b>MDAnalysis · MDTraj · ProDy</b><small>Análise trajetória · RMSD · RMSF · PCA · DSSP · SASA · H-bond</small></div>
+    </div>
+  </div>
+
+</div>
+</section>
+
+<section id="flow">
+<h2>3. Fluxo do usuário (primeiro uso &rarr; execução)</h2>
+
+<div class="panel">
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-body">
+      <b>Duplo-clique em MolDynStudio.exe</b><br>
+      PyInstaller extrai <code>environment.yml</code> + <code>install_wsl.ps1</code> em <code>sys._MEIPASS</code>. <code>main.py</code> sobe.
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-body">
+      <b>SetupWizard abre como dashboard</b><br>
+      3 linhas de status: WSL2 · Conda env · GROMACS. Cada linha tem ícone (&#x2705;/&#x274C;/&#x23F3;) + botão de ação inline.
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-body">
+      <b>Diagnóstico de virtualização BIOS</b><br>
+      <code>_check_virtualization()</code> chama <code>Get-ComputerInfo</code>. Se <code>HyperVRequirementVirtualizationFirmwareEnabled = False</code>, mostra botão <code>BIOS guide</code> em vez de tentar instalar WSL (que falharia).
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-body">
+      <b>Install WSL2 (se necessário)</b><br>
+      Roda <code>install_wsl.ps1</code> elevado via <code>Start-Process &hellip; -Verb RunAs</code>. Habilita <code>VirtualMachinePlatform</code> + <code>Microsoft-Windows-Subsystem-Linux</code>, instala <code>wsl --install --no-distribution</code>, depois Ubuntu-22.04.
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-body">
+      <b>Create env (se necessário)</b><br>
+      <code>_CommandWorker</code> (QThread) roda <code>conda env create -f environment.yml</code> dentro do WSL. Stream stdout pro QTextEdit. ~10-20 min, ~3 GB.
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">6</div>
+    <div class="flow-body">
+      <b>Tudo verde &rarr; Begin habilitado</b><br>
+      Usuário clica <code>Begin &rarr;</code>. Dialog fecha. <code>gromacs_analysis_studio_v11.main()</code> abre a MainWindow.
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">7</div>
+    <div class="flow-body">
+      <b>Próximas execuções</b><br>
+      Launcher abre, todos os checks verdes em &lt;1s. Usuário clica <code>Begin</code>. Comportamento idêntico ao "splash check + launch".
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="bridge">
+<h2>4. Como a WSL Bridge funciona</h2>
+
+<div class="grid-2">
+  <div class="panel">
+    <h3>Wrap de comando</h3>
+    <pre><code># Chamada Python no Windows:
+wsl_bridge.gmx(["pdb2gmx", "-f", "in.pdb"])
+
+# Bridge transforma em:
+wsl.exe -- bash -lc \
+  "cd /mnt/c/proj &amp;&amp; \
+   conda run --no-capture-output \
+     -n moldynstudio gmx pdb2gmx -f in.pdb"</code></pre>
+  </div>
+
+  <div class="panel">
+    <h3>Conversão de paths</h3>
+    <pre><code>win_to_wsl(r"C:\Users\foo\bar")
+# &rarr; "/mnt/c/Users/foo/bar"
+
+wsl_to_win("/mnt/c/work/traj.xtc")
+# &rarr; "C:/work/traj.xtc"</code></pre>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>API pública de <code>core/wsl_bridge.py</code></h3>
+  <table>
+    <thead><tr><th>Função</th><th>Uso</th></tr></thead>
+    <tbody>
+      <tr><td><code>run(cmd, cwd, env_name)</code></td><td>Subprocess síncrono · captura stdout/stderr</td></tr>
+      <tr><td><code>popen(cmd, cwd, env_name)</code></td><td>Subprocess streaming · stdout linha-a-linha</td></tr>
+      <tr><td><code>gmx(args)</code> / <code>gmx_popen(args)</code></td><td>Atalhos para chamar <code>gmx</code></td></tr>
+      <tr><td><code>win_to_wsl(p)</code> / <code>wsl_to_win(p)</code></td><td>Tradução de paths bidirecional</td></tr>
+      <tr><td><code>check_wsl_available()</code></td><td>Verifica <code>wsl.exe</code> + distros instaladas</td></tr>
+      <tr><td><code>check_conda_env(name)</code></td><td>Verifica env existe dentro do WSL</td></tr>
+      <tr><td><code>check_gmx(env_name)</code></td><td>Roda <code>gmx --version</code> e parseia</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="pipeline">
+<h2>5. Pipeline GROMACS (SystemPrepWorker)</h2>
+<p>QThread em <code>core/system_prep.py</code> executa 5 etapas sequenciais para preparar o sistema solvatado e neutralizado:</p>
+
+<div class="pipeline">
+  <div class="pipe-step"><b>pdb2gmx</b>Topologia + força de campo</div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-step"><b>editconf</b>Caixa de simulação</div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-step"><b>solvate</b>Adiciona moléculas de água</div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-step"><b>grompp</b>Pré-processa ions.mdp</div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-step"><b>genion</b>Neutraliza com Na&#8314;/Cl&#8315;</div>
+</div>
+
+<div class="panel">
+  <h3>Detalhe técnico</h3>
+  <ul>
+    <li><b>genion interativo:</b> requer stdin (qual grupo de solvente substituir). Bridge embrulha com <code>echo SOL | gmx genion &hellip;</code></li>
+    <li><b>ions.mdp auto-gerado:</b> <code>SystemPrepWorker._ensure_ions_mdp()</code> escreve MDP mínimo se ausente</li>
+    <li><b>Sinais Qt:</b> <code>log = pyqtSignal(str)</code> · <code>done = pyqtSignal(bool, str)</code></li>
+  </ul>
+</div>
+
+<h3>Parametrização de ligante paralela</h3>
+<div class="panel">
+  <p><code>utils/topology_builder.py</code> · <code>LigandParamWorker</code> (QThread) roda em paralelo ao SystemPrep:</p>
+  <pre><code>acpype -i ligand.mol2 -c am1bcc -n 0 -b LIG</code></pre>
+  <p>Gera <code>LIG_GMX.itp</code> + <code>LIG_GMX.gro</code> compatível com AMBER force field.</p>
+</div>
+</section>
+
+<section id="modules">
+<h2>6. Módulos do projeto</h2>
+
+<div class="panel">
+<pre><code>Gromacs_GUI/
+&#9500;&#9472; MolDynStudio.exe         &larr; duplo-clique, autocontido (gerado em dist/)
+&#9500;&#9472; main.py                  &larr; entry point: SetupWizard &rarr; MainWindow
+&#9500;&#9472; setup_wizard.py          &larr; launcher dashboard (status + Begin)
+&#9500;&#9472; install_wsl.ps1          &larr; installer elevado (checa BIOS virt)
+&#9500;&#9472; environment.yml          &larr; define env conda (GROMACS, etc.)
+&#9500;&#9472; build.bat                &larr; duplo-clique p/ compilar
+&#9500;&#9472; launch_windows.bat / .ps1&larr; modo dev (sem .exe)
+&#9474;
+&#9500;&#9472; core/
+&#9474;  &#9500;&#9472; wsl_bridge.py        &larr; wrap wsl.exe -- bash -lc + path conv
+&#9474;  &#9500;&#9472; gromacs_runner.py    &larr; QThread executor com streaming
+&#9474;  &#9500;&#9472; system_prep.py       &larr; pdb2gmx &rarr; solvate &rarr; genion
+&#9474;  &#9500;&#9472; project_manager.py   &larr; serialização .moldyn (JSON)
+&#9474;  &#9500;&#9472; settings.py          &larr; QSettings persistido
+&#9474;  &#9492;&#9472; environment_manager.py
+&#9474;
+&#9500;&#9472; tabs/
+&#9474;  &#9500;&#9472; base.py              &larr; MolDynBasePage + PathSelector
+&#9474;  &#9500;&#9472; md_setup_tab.py      &larr; inputs, force field, MDP preview
+&#9474;  &#9500;&#9472; md_run_tab.py        &larr; execução + monitoramento
+&#9474;  &#9492;&#9472; analysis_tab.py      &larr; dispatch de análises
+&#9474;
+&#9500;&#9472; analysis/
+&#9474;  &#9500;&#9472; rmsd.py · rmsf.py · gyration.py · pca.py
+&#9474;  &#9500;&#9472; dssp.py · hbond.py · sasa.py · contact_map.py
+&#9474;  &#9500;&#9472; dihedral.py · mmpbsa.py · cpptraj_builder.py
+&#9474;  &#9492;&#9472; base.py
+&#9474;
+&#9500;&#9472; windows/
+&#9474;  &#9500;&#9472; splash_screen.py     &larr; dependency checks legado
+&#9474;  &#9500;&#9472; mdp_editor.py        &larr; editor texto MDP
+&#9474;  &#9500;&#9472; mmpbsa_dialog.py
+&#9474;  &#9500;&#9472; plot_window.py       &larr; matplotlib FigureCanvas
+&#9474;  &#9500;&#9472; trajectory_viewer.py
+&#9474;  &#9492;&#9472; help_dialog.py
+&#9474;
+&#9500;&#9472; utils/
+&#9474;  &#9500;&#9472; mdp_generator.py     &larr; gera MDPs canônicos
+&#9474;  &#9500;&#9472; topology_builder.py  &larr; ACPYPE worker
+&#9474;  &#9500;&#9472; file_validators.py
+&#9474;  &#9492;&#9472; tooltips.py
+&#9474;
+&#9500;&#9472; build/create_installer.py&larr; PyInstaller config (--onefile)
+&#9492;&#9472; tests/                   &larr; 22 testes (unittest)</code></pre>
+</div>
+</section>
+
+<section id="build">
+<h2>7. Build & Deploy</h2>
+
+<div class="grid-2">
+  <div class="panel">
+    <h3>Build (1&times;, desenvolvedor)</h3>
+    <pre><code>Duplo-clique em: build.bat</code></pre>
+    <ul>
+      <li>Instala PyInstaller + PyQt5 + matplotlib</li>
+      <li>Roda <code>python build/create_installer.py</code></li>
+      <li>Produz <code>dist/MolDynStudio.exe</code> (~64 MB)</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h3>Run (&infin;&times;, usuário final)</h3>
+    <pre><code>Duplo-clique em: MolDynStudio.exe</code></pre>
+    <ul>
+      <li>Sem Python instalado no host</li>
+      <li>Sem conda no host</li>
+      <li>WSL2 é instalado pelo próprio app</li>
+      <li>Env conda criado no WSL pelo próprio app</li>
+    </ul>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>Flags PyInstaller importantes</h3>
+  <pre><code>--onefile                    # single-exe distribuivel
+--windowed                   # sem console janela
+--add-data environment.yml;. # bundle no _MEIPASS
+--add-data install_wsl.ps1;.
+--collect-submodules tabs    # captura imports dinamicos
+--collect-submodules analysis
+--collect-submodules windows
+--collect-submodules core
+--collect-submodules utils</code></pre>
+</div>
+</section>
+
+<section id="stack">
+<h2>8. Stack técnica</h2>
+
+<table>
+  <thead><tr><th>Camada</th><th>Tecnologia</th><th>Versão / nota</th></tr></thead>
+  <tbody>
+    <tr><td>GUI</td><td>PyQt5</td><td>Qt 5.15</td></tr>
+    <tr><td>Plotting</td><td>matplotlib</td><td>FigureCanvasQTAgg</td></tr>
+    <tr><td>Threading</td><td>QThread + pyqtSignal</td><td>Workers não-bloqueantes</td></tr>
+    <tr><td>Packaging</td><td>PyInstaller</td><td><code>--onefile --windowed</code></td></tr>
+    <tr><td>Bridge</td><td><code>subprocess</code> + <code>wsl.exe -- bash -lc</code></td><td>Sem WSL Interop Python</td></tr>
+    <tr><td>Env mgmt</td><td>conda (Miniconda no WSL)</td><td><code>environment.yml</code></td></tr>
+    <tr><td>MD engine</td><td>GROMACS</td><td>2024.x · CUDA opcional</td></tr>
+    <tr><td>Ligand prep</td><td>AmberTools / ACPYPE</td><td>AM1-BCC default</td></tr>
+    <tr><td>&Delta;G binding</td><td>gmx_MMPBSA</td><td>MM-PBSA / MM-GBSA</td></tr>
+    <tr><td>Trajetória</td><td>MDAnalysis · MDTraj · ProDy</td><td>RMSD · RMSF · PCA · DSSP · SASA · H-bond</td></tr>
+    <tr><td>Testes</td><td>unittest</td><td>22 testes verde</td></tr>
+  </tbody>
+</table>
+
+<div class="panel" style="margin-top: 20px;">
+  <h3>Requisitos de host</h3>
+  <ul>
+    <li><b>Windows 10/11</b> 64-bit · build 19041+</li>
+    <li><b>CPU virt:</b> Intel VT-x ou AMD-V <b>habilitado no BIOS/UEFI</b> &#x26A0;&#xFE0F;</li>
+    <li><b>WSL2 features:</b> instaladas automaticamente pelo <code>install_wsl.ps1</code></li>
+    <li><b>Disco:</b> ~5 GB (env conda) + espaço para trajetórias</li>
+    <li><b>RAM:</b> 8 GB mínimo · 16+ recomendado para sistemas grandes</li>
+  </ul>
+</div>
+</section>
+
+</main>
+
+<footer>
+  MolDynStudio · arquitetura gerada automaticamente · PyQt5 + WSL2 + GROMACS
+</footer>
+
+</body>
+</html>
