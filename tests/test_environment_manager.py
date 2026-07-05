@@ -3,19 +3,25 @@ from __future__ import annotations
 import unittest
 
 from core.environment_manager import build_conda_install_command, package_import_name
+from core.environment_manager import REQUIRED_PACKAGES
 from core.gromacs_runner import CommandSpec, GromacsCommandBuilder
 
 
 class EnvironmentManagerTests(unittest.TestCase):
     def test_known_import_name_mapping(self):
         self.assertEqual(package_import_name("mdanalysis"), "MDAnalysis")
-        self.assertEqual(package_import_name("pyqt5"), "PyQt5")
         self.assertEqual(package_import_name("numpy"), "numpy")
 
     def test_build_conda_command_groups_conda_specs(self):
-        command = build_conda_install_command(["conda-forge::gromacs=2024.1"], "moldynstudio")
+        command = build_conda_install_command(["conda-forge::gromacs"], "moldynstudio")
         self.assertEqual(command[:6], ["conda", "install", "-n", "moldynstudio", "-c", "conda-forge"])
-        self.assertIn("gromacs=2024.1", command)
+        self.assertIn("gromacs", command)
+
+    def test_scientific_environment_excludes_gui_qt_packages(self):
+        self.assertNotIn("pyqt5", REQUIRED_PACKAGES)
+        self.assertNotIn("pytraj", REQUIRED_PACKAGES)
+        self.assertNotIn("nglview", REQUIRED_PACKAGES)
+        self.assertIn("acpype", REQUIRED_PACKAGES)
 
     def test_build_conda_command_includes_pip_specs(self):
         command = build_conda_install_command(["conda-forge::numpy", "pip::py3dmol"], "moldynstudio")

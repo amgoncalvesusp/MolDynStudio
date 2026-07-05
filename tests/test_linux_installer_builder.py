@@ -43,6 +43,12 @@ class LinuxInstallerBuilderTests(unittest.TestCase):
         self.assertIn(".moldynstudio-install", stub)
         self.assertIn("was not created by this installer", stub)
 
+    def test_installer_launcher_defaults_to_xcb_without_overriding_user_choice(self):
+        stub = create_linux_installer.INSTALLER_STUB
+
+        self.assertIn('QT_QPA_PLATFORM="\\${QT_QPA_PLATFORM:-xcb}"', stub)
+        self.assertIn("sudo apt install -y $UBUNTU_QT_DEPS", stub)
+
 
 if __name__ == "__main__":
     unittest.main()

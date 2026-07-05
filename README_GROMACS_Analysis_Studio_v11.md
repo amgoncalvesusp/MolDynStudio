@@ -1,4 +1,4 @@
-# MolDynStudio v1.0.0
+# MolDynStudio v1.0.1
 
 Inventor: Adriano Marques Gonçalves (UNIARA)
 
@@ -45,6 +45,25 @@ For interface testing without the full MD stack:
 ```bash
 pip install -r requirements.txt
 python main.py
+```
+
+## Ubuntu Linux Prerequisites
+
+The Linux installer creates a Python virtual environment for the GUI. On clean Ubuntu installs, Qt may also need XCB/OpenGL platform libraries:
+
+```bash
+sudo apt install -y \
+  python3-venv \
+  libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
+  libxcb-xkb1 libxkbcommon-x11-0 libx11-xcb1 libxcb-randr0 \
+  libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 \
+  libgl1
+```
+
+The generated Linux launcher defaults to `QT_QPA_PLATFORM=xcb` for predictable XWayland compatibility. Override it before launching if you want to test native Wayland:
+
+```bash
+QT_QPA_PLATFORM=wayland moldynstudio
 ```
 
 ## Dependency Check

@@ -19,7 +19,7 @@ class TrajectoryViewerWindow(QMainWindow):
         self.resize(1000, 740)
         if QWebEngineView is None:
             fallback = QLabel(
-                "QtWebEngine is not installed. Install qtwebengine/nglview to use the embedded trajectory viewer.\n\n"
+                "PyQtWebEngine is not installed. Install the GUI requirements to use the embedded trajectory viewer.\n\n"
                 f"Topology: {topology}\nTrajectory: {trajectory}"
             )
             fallback.setWordWrap(True)
@@ -52,4 +52,3 @@ class TrajectoryViewerWindow(QMainWindow):
   </script>
 </body>
 </html>"""
-

@@ -58,6 +58,7 @@ PYTHON_BIN="${PYTHON:-python3}"
 VENV_DIR="$INSTALL_DIR/.venv"
 LAUNCHER="$BIN_DIR/$APP_ID"
 DESKTOP_FILE="$DESKTOP_DIR/$APP_ID.desktop"
+UBUNTU_QT_DEPS="python3-venv libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1 libxkbcommon-x11-0 libx11-xcb1 libxcb-randr0 libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 libgl1"
 
 payload_line="$(awk '/^__MOLDYNSTUDIO_PAYLOAD_BELOW__$/ {print NR + 1; exit 0;}' "$0")"
 if [ -z "$payload_line" ]; then
@@ -68,6 +69,23 @@ fi
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   echo "ERROR: python3 not found. Install Python 3.10+ and re-run this installer." >&2
   exit 1
+fi
+
+missing_libs=""
+for lib in libxcb-icccm.so.4 libxcb-image.so.0 libxcb-keysyms.so.1 libxcb-render-util.so.0 libxcb-xkb.so.1 libxkbcommon-x11.so.0 libX11-xcb.so.1 libxcb-randr.so.0 libxcb-shape.so.0 libxcb-sync.so.1 libxcb-xfixes.so.0 libxcb-xinerama.so.0 libGL.so.1; do
+  if ! ldconfig -p 2>/dev/null | grep -q "$lib"; then
+    missing_libs="$missing_libs $lib"
+  fi
+done
+if [ -n "$missing_libs" ]; then
+  cat <<MSG
+WARNING: Some Qt/XCB system libraries may be missing:$missing_libs
+On Ubuntu, install the recommended GUI prerequisites with:
+  sudo apt install -y $UBUNTU_QT_DEPS
+
+Continuing install. If the app fails to open later with an xcb/Qt platform
+plugin error, install the packages above and run moldynstudio again.
+MSG
 fi
 
 tmp_dir="$(mktemp -d)"
@@ -111,6 +129,7 @@ cat > "$LAUNCHER" <<LAUNCHER
 set -euo pipefail
 cd $quoted_install_dir
 export PYTHONPATH=$quoted_install_dir
+export QT_QPA_PLATFORM="\${QT_QPA_PLATFORM:-xcb}"
 exec $quoted_install_dir/.venv/bin/python $quoted_install_dir/main.py "\$@"
 LAUNCHER
 chmod +x "$LAUNCHER"
@@ -138,6 +157,8 @@ Run from a terminal with:
 
 If the PyQt window does not open on a minimal Linux install, add the platform
 libraries required by PyQtWebEngine for your distribution and run again.
+On Ubuntu:
+  sudo apt install -y $UBUNTU_QT_DEPS
 MSG
 exit 0
 

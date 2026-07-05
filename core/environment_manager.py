@@ -30,29 +30,25 @@ except Exception:  # pragma: no cover - keeps pure helpers importable without Py
 
 
 REQUIRED_PACKAGES: Mapping[str, str] = {
-    "gromacs": "conda-forge::gromacs=2024.1",
+    "gromacs": "conda-forge::gromacs",
     "ambertools": "conda-forge::ambertools=23",
     "gmx_mmpbsa": "conda-forge::gmx_mmpbsa",
     "mdanalysis": "conda-forge::mdanalysis",
     "mdtraj": "conda-forge::mdtraj",
     "prody": "conda-forge::prody",
-    "pytraj": "conda-forge::pytraj",
     "matplotlib": "conda-forge::matplotlib",
-    "nglview": "conda-forge::nglview",
     "py3dmol": "pip::py3dmol",
+    "acpype": "pip::acpype",
     "numpy": "conda-forge::numpy",
     "pandas": "conda-forge::pandas",
     "scipy": "conda-forge::scipy",
     "seaborn": "conda-forge::seaborn",
     "openpyxl": "conda-forge::openpyxl",
-    "pyqt5": "conda-forge::pyqt5",
-    "pyqtgraph": "conda-forge::pyqtgraph",
 }
 
 IMPORT_NAMES: Mapping[str, str] = {
     "gmx_mmpbsa": "GMXMMPBSA",
     "mdanalysis": "MDAnalysis",
-    "pyqt5": "PyQt5",
 }
 
 
@@ -107,8 +103,13 @@ class DependencyChecker(QThread):
         self.all_done.emit(not missing)
 
     def is_installed(self, package: str) -> bool:
-        if package in {"gromacs", "ambertools"}:
-            return shutil.which("gmx") is not None if package == "gromacs" else shutil.which("cpptraj") is not None
+        if package in {"gromacs", "ambertools", "acpype"}:
+            executables = {
+                "gromacs": "gmx",
+                "ambertools": "cpptraj",
+                "acpype": "acpype",
+            }
+            return shutil.which(executables[package]) is not None
         return is_python_package_installed(package)
 
     def install_missing(self, specs: list[str]) -> int:

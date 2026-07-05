@@ -1,4 +1,4 @@
-# MolDynStudio
+# MolDynStudio v1.0.1
 
 Inventor: Adriano Marques Gonçalves (UNIARA)
 
