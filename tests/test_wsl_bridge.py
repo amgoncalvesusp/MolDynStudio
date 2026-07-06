@@ -41,7 +41,7 @@ class WSLBridgePathTests(unittest.TestCase):
 
 
 class WSLBridgeWrapTests(unittest.TestCase):
-    def test_wrap_on_unix_uses_conda_run(self):
+    def test_wrap_on_unix_sources_conda_before_conda_run(self):
         with (
             mock.patch.object(wsl_bridge, "IS_WINDOWS", False),
             mock.patch.object(wsl_bridge.shutil, "which", return_value=None),
@@ -49,10 +49,12 @@ class WSLBridgeWrapTests(unittest.TestCase):
             cmd = wsl_bridge._wrap(
                 ["gmx", "--version"], cwd=None, env_name="moldynstudio"
             )
-        self.assertEqual(
-            cmd[:5], ["conda", "run", "--no-capture-output", "-n", "moldynstudio"]
+        self.assertEqual(cmd[:2], ["bash", "-lc"])
+        self.assertIn("conda.sh", cmd[2])
+        self.assertIn(
+            "conda run --no-capture-output -n moldynstudio gmx --version",
+            cmd[2],
         )
-        self.assertIn("gmx", cmd)
 
     def test_wrap_on_windows_with_wsl_uses_bash_lc(self):
         with (
@@ -93,13 +95,27 @@ class WSLBridgeWrapTests(unittest.TestCase):
         self.assertIn("conda env create -f /mnt/c/work/environment.yml", cmd[4])
         self.assertNotIn("conda run", cmd[4])
 
-    def test_wrap_raw_on_native_returns_command_without_conda_run(self):
+    def test_wrap_raw_on_native_sources_conda_without_target_env_prefix(self):
         with (
             mock.patch.object(wsl_bridge, "IS_WINDOWS", False),
             mock.patch.object(wsl_bridge.shutil, "which", return_value=None),
         ):
             cmd = wsl_bridge._wrap_raw(["conda", "env", "list"], cwd=None)
-        self.assertEqual(cmd, ["conda", "env", "list"])
+        self.assertEqual(cmd[:2], ["bash", "-lc"])
+        self.assertIn("conda.sh", cmd[2])
+        self.assertIn("conda env list", cmd[2])
+        self.assertNotIn("conda run", cmd[2])
+
+    def test_wrap_includes_native_cwd_when_provided(self):
+        with (
+            mock.patch.object(wsl_bridge, "IS_WINDOWS", False),
+            mock.patch.object(wsl_bridge.shutil, "which", return_value=None),
+        ):
+            cmd = wsl_bridge._wrap(
+                ["gmx", "mdrun"], cwd="/tmp/work dir", env_name="moldynstudio"
+            )
+        self.assertIn("cd '/tmp/work dir' &&", cmd[2])
+        self.assertIn("conda run --no-capture-output", cmd[2])
 
     def test_wrap_raw_shell_on_windows_uses_wsl_bash(self):
         with (
@@ -152,6 +168,26 @@ class WSLBridgeWrapTests(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertIn("conda not found", message.lower())
+
+    def test_check_conda_env_on_native_sources_conda_profiles(self):
+        completed = wsl_bridge.subprocess.CompletedProcess(
+            args=["bash"],
+            returncode=0,
+            stdout="moldynstudio  /home/user/miniforge3/envs/moldynstudio\n",
+            stderr="",
+        )
+        with (
+            mock.patch.object(wsl_bridge, "IS_WINDOWS", False),
+            mock.patch.object(wsl_bridge.subprocess, "run", return_value=completed) as run,
+        ):
+            ok, message = wsl_bridge.check_conda_env()
+
+        self.assertTrue(ok)
+        self.assertIn("found", message)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["bash", "-lc"])
+        self.assertIn("conda.sh", command[2])
+        self.assertIn("conda env list", command[2])
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ MINIFORGE_INSTALLER_URL = (
 )
 CONDA_PRELUDE = (
     'for f in "$HOME/miniforge3/etc/profile.d/conda.sh" '
+    '"$HOME/mambaforge/etc/profile.d/conda.sh" '
     '"$HOME/miniconda3/etc/profile.d/conda.sh" '
     '"$HOME/anaconda3/etc/profile.d/conda.sh"; do '
     '[ -f "$f" ] && . "$f" && break; '
@@ -62,6 +63,17 @@ def win_to_wsl(path: str) -> str:
     return converted or f"/mnt/{drive}"
 
 
+def _join_shell_args(cmd: Iterable[str]) -> str:
+    return " ".join(shlex.quote(str(c)) for c in cmd)
+
+
+def _wrap_native_shell(script: str, cwd: Optional[str]) -> list[str]:
+    inner = f"{CONDA_PRELUDE}; {script}"
+    if cwd:
+        inner = f"{CONDA_PRELUDE}; cd {shlex.quote(cwd)} && {script}"
+    return ["bash", "-lc", inner]
+
+
 def wsl_to_win(path: str) -> str:
     """Convert ``/mnt/c/Users/foo/bar`` -> ``C:/Users/foo/bar``."""
 
@@ -78,7 +90,7 @@ def wsl_to_win(path: str) -> str:
 def _wrap(cmd: Iterable[str], cwd: Optional[str], env_name: str) -> list[str]:
     cmd_list = [str(c) for c in cmd]
     if IS_WINDOWS and shutil.which("wsl") is not None:
-        joined = " ".join(shlex.quote(c) for c in cmd_list)
+        joined = _join_shell_args(cmd_list)
         quoted_env = shlex.quote(env_name)
         if cwd:
             wsl_cwd = win_to_wsl(cwd)
@@ -93,7 +105,11 @@ def _wrap(cmd: Iterable[str], cwd: Optional[str], env_name: str) -> list[str]:
                 f"conda run --no-capture-output -n {quoted_env} {joined}"
             )
         return ["wsl.exe", "--", "bash", "-lc", _escape_wsl_bash_arg(inner)]
-    return ["conda", "run", "--no-capture-output", "-n", env_name, *cmd_list]
+    joined = _join_shell_args(cmd_list)
+    quoted_env = shlex.quote(env_name)
+    return _wrap_native_shell(
+        f"conda run --no-capture-output -n {quoted_env} {joined}", cwd
+    )
 
 
 def _wrap_raw(cmd: Iterable[str], cwd: Optional[str]) -> list[str]:
@@ -107,13 +123,13 @@ def _wrap_raw(cmd: Iterable[str], cwd: Optional[str]) -> list[str]:
     if IS_WINDOWS:
         if shutil.which("wsl") is None:
             raise FileNotFoundError("wsl.exe not found")
-        joined = " ".join(shlex.quote(c) for c in cmd_list)
+        joined = _join_shell_args(cmd_list)
         if cwd:
             wsl_cwd = win_to_wsl(cwd)
             joined = f"cd {shlex.quote(wsl_cwd)} && {joined}"
         inner = f"{CONDA_PRELUDE}; {joined}"
         return ["wsl.exe", "--", "bash", "-lc", _escape_wsl_bash_arg(inner)]
-    return cmd_list
+    return _wrap_native_shell(_join_shell_args(cmd_list), cwd)
 
 
 def _wrap_raw_shell(script: str, cwd: Optional[str]) -> list[str]:
@@ -127,7 +143,7 @@ def _wrap_raw_shell(script: str, cwd: Optional[str]) -> list[str]:
         if shutil.which("wsl") is None:
             raise FileNotFoundError("wsl.exe not found")
         return ["wsl.exe", "--", "bash", "-lc", _escape_wsl_bash_arg(inner)]
-    return ["bash", "-lc", inner]
+    return _wrap_native_shell(script, cwd)
 
 
 def run(
@@ -293,7 +309,7 @@ def check_conda_env(env_name: str = DEFAULT_ENV) -> tuple[bool, str]:
             )
         else:
             r = subprocess.run(
-                ["conda", "env", "list"],
+                _wrap_native_shell("conda env list", cwd=None),
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -303,9 +319,10 @@ def check_conda_env(env_name: str = DEFAULT_ENV) -> tuple[bool, str]:
     if r.returncode != 0:
         detail = (r.stderr or r.stdout or "").strip()
         if "conda: command not found" in detail or r.returncode == 127:
+            where = "WSL" if IS_WINDOWS else "this Linux/macOS installation"
             return (
                 False,
-                "conda not found in WSL. Click Create env to install Miniforge "
+                f"conda not found in {where}. Click Create env to install Miniforge "
                 "and create the moldynstudio environment.",
             )
         return False, f"conda probe failed: {detail[:200] or f'exit code {r.returncode}'}"
