@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from subprocess import CompletedProcess
 from unittest import mock
@@ -8,6 +9,10 @@ from windows import splash_screen
 
 
 class SplashScreenDependencyTests(unittest.TestCase):
+    def test_platform_check_uses_native_label_on_linux(self):
+        expected = "WSL2" if sys.platform == "win32" else "Linux"
+        self.assertEqual(splash_screen.REAL_CHECKS[0][0], expected)
+
     def test_import_check_runs_inside_scientific_environment(self):
         completed = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         with mock.patch.object(

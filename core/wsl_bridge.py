@@ -286,7 +286,26 @@ def check_wsl_available() -> tuple[bool, str]:
         if line.strip().replace("\x00", "")
     ]
     if distros:
-        return True, distros[0]
+        distro = distros[0]
+        try:
+            startup = subprocess.run(
+                ["wsl.exe", "--distribution", distro, "--", "true"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return False, f"WSL distro '{distro}' could not start: {exc}"
+        if startup.returncode != 0:
+            detail = (startup.stderr or startup.stdout or "").replace("\x00", "").strip()
+            return (
+                False,
+                f"WSL distro '{distro}' could not start: "
+                f"{detail[:300] or f'exit code {startup.returncode}'}. "
+                "Check that CPU virtualization and the Virtual Machine "
+                "Platform Windows feature are enabled, then reboot.",
+            )
+        return True, distro
     return False, "WSL installed but no distro found. Run install_wsl.ps1."
 
 

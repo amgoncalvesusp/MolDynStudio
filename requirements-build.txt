@@ -1,0 +1,4 @@
+coverage==7.15.1
+pyinstaller==6.21.0
+pytest==9.0.3
+ruff==0.14.5

@@ -75,7 +75,7 @@ def _gmx_mmpbsa_check() -> tuple[bool, str]:
 
 
 REAL_CHECKS: tuple[tuple[str, Callable[[], tuple[bool, str]]], ...] = (
-    ("WSL2", wsl_bridge.check_wsl_available),
+    ("WSL2" if sys.platform == "win32" else "Linux", wsl_bridge.check_wsl_available),
     ("conda env", wsl_bridge.check_conda_env),
     ("GROMACS (gmx)", wsl_bridge.check_gmx),
     ("MDAnalysis", lambda: _import_check("MDAnalysis")),

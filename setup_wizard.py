@@ -213,7 +213,8 @@ class SetupWizard(QDialog):
 
         outer.addSpacing(12)
 
-        self.row_wsl = _StatusRow("WSL2")
+        platform_label = "WSL2" if sys.platform == "win32" else "Linux"
+        self.row_wsl = _StatusRow(platform_label)
         self.row_env = _StatusRow("Conda env")
         self.row_gmx = _StatusRow("GROMACS")
         outer.addWidget(self.row_wsl)

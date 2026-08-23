@@ -10,7 +10,7 @@ Installed in WSL on first run (NOT bundled, too large):
     * GROMACS, AmberTools, gmx_MMPBSA, MDAnalysis, MDTraj, ProDy
 
 Usage:
-    pip install pyinstaller
+    python -m pip install -r requirements-build.txt
     python build/create_installer.py
 """
 
@@ -24,6 +24,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENTRY = REPO_ROOT / "main.py"
+BUILD_REQUIREMENTS = REPO_ROOT / "requirements-build.txt"
 
 
 def ensure_pyinstaller() -> None:
@@ -34,8 +35,21 @@ def ensure_pyinstaller() -> None:
         check=False,
     )
     if probe.returncode != 0:
-        print("Installing PyInstaller...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+        if not BUILD_REQUIREMENTS.is_file():
+            raise FileNotFoundError(
+                f"Build requirements file not found: {BUILD_REQUIREMENTS}"
+            )
+        print(f"Installing pinned build requirements from {BUILD_REQUIREMENTS}...")
+        subprocess.check_call(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                str(BUILD_REQUIREMENTS),
+            ]
+        )
 
 
 def build() -> int:

@@ -74,7 +74,7 @@ except Exception:
 
 
 APP_NAME = "MolDynStudio"
-APP_VERSION = "v1.0.2"
+APP_VERSION = "v1.0.3"
 APP_INVENTOR = "Adriano Marques Gonçalves (UNIARA)"
 
 NAV_ITEMS = [

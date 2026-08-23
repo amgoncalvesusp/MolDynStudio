@@ -1,4 +1,4 @@
-# MolDynStudio v1.0.2
+# MolDynStudio v1.0.3
 
 Inventor: Adriano Marques Gonçalves (UNIARA)
 
@@ -87,6 +87,7 @@ The tests focus on pure logic that does not require launching Qt: project files,
 Windows executable:
 
 ```powershell
+python -m pip install -r requirements-build.txt
 python build\create_installer.py
 Compress-Archive -Path .\dist\MolDynStudio.exe -DestinationPath .\dist\MolDynStudio-windows-x86_64.zip -Force
 ```

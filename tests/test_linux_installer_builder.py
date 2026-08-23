@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tarfile
 import tempfile
 import unittest
@@ -39,6 +40,21 @@ class LinuxInstallerBuilderTests(unittest.TestCase):
 
         self.assertTrue(info.mode & 0o111)
 
+    def test_create_installer_writes_executable_self_extracting_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "MolDynStudio.run"
+
+            result = create_linux_installer.create_installer(output)
+
+            self.assertEqual(result, output)
+            self.assertTrue(output.read_bytes().startswith(b"#!/usr/bin/env bash\n"))
+            self.assertIn(
+                b"__MOLDYNSTUDIO_PAYLOAD_BELOW__\n",
+                output.read_bytes(),
+            )
+            if os.name != "nt":
+                self.assertTrue(output.stat().st_mode & 0o111)
+
     def test_installer_refuses_to_overwrite_unmanaged_directory(self):
         stub = create_linux_installer.INSTALLER_STUB
 
@@ -53,6 +69,8 @@ class LinuxInstallerBuilderTests(unittest.TestCase):
 
         self.assertIn(guard, stub)
         self.assertIn(dangerous_patterns, stub)
+        self.assertIn('"$HOME"/*)', stub)
+        self.assertIn("must be inside the current user's home", stub)
         self.assertLess(stub.index(guard), stub.index(recursive_delete))
 
     def test_installer_launcher_defaults_to_xcb_without_overriding_user_choice(self):
@@ -60,6 +78,15 @@ class LinuxInstallerBuilderTests(unittest.TestCase):
 
         self.assertIn('QT_QPA_PLATFORM="\\${QT_QPA_PLATFORM:-xcb}"', stub)
         self.assertIn("sudo apt install -y $UBUNTU_QT_DEPS", stub)
+
+    def test_source_launcher_bootstraps_a_local_virtualenv(self):
+        launcher = (create_linux_installer.REPO_ROOT / "launch_analysis_studio.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('PYTHON_BIN="${PYTHON:-python3}"', launcher)
+        self.assertIn('VENV_DIR="${MOLDYNSTUDIO_VENV_DIR:-$SCRIPT_DIR/.venv}"', launcher)
+        self.assertIn('exec "$VENV_DIR/bin/python" main.py', launcher)
 
 
 if __name__ == "__main__":

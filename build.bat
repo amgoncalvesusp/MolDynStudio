@@ -18,9 +18,9 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo === Installing PyInstaller and runtime deps ===
+echo === Installing pinned build tools and runtime deps ===
 python -m pip install --upgrade pip
-python -m pip install pyinstaller
+python -m pip install -r requirements-build.txt
 python -m pip install -r requirements.txt
 if %errorlevel% neq 0 (
     echo ERROR: pip install failed.

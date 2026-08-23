@@ -70,6 +70,23 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Canonicalize user overrides and reject destinations whose replacement could
+# destroy an account or system root. Python is already a required dependency,
+# so this does not add another platform assumption.
+INSTALL_DIR="$("$PYTHON_BIN" -c 'import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$INSTALL_DIR")"
+case "$INSTALL_DIR" in
+  "/"|"$HOME")
+    echo "ERROR: refusing unsafe install directory: $INSTALL_DIR" >&2
+    exit 1
+    ;;
+  "$HOME"/*) ;;
+  *)
+    echo "ERROR: install directory must be inside the current user's home: $HOME" >&2
+    exit 1
+    ;;
+esac
+VENV_DIR="$INSTALL_DIR/.venv"
+
 missing_libs=""
 for lib in libxcb-icccm.so.4 libxcb-image.so.0 libxcb-keysyms.so.1 libxcb-render-util.so.0 libxcb-xkb.so.1 libxkbcommon-x11.so.0 libX11-xcb.so.1 libxcb-randr.so.0 libxcb-shape.so.0 libxcb-sync.so.1 libxcb-xfixes.so.0 libxcb-xinerama.so.0 libGL.so.1; do
   if ! ldconfig -p 2>/dev/null | grep -q "$lib"; then

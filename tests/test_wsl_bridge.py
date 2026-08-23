@@ -72,6 +72,28 @@ class WSLBridgeWrapTests(unittest.TestCase):
         self.assertIn("virtualization", message.lower())
         self.assertEqual(run.call_count, 2)
 
+    def test_check_wsl_available_starts_the_listed_distro(self):
+        listed = wsl_bridge.subprocess.CompletedProcess(
+            args=["wsl.exe"], returncode=0, stdout="Ubuntu\n", stderr=""
+        )
+        started = wsl_bridge.subprocess.CompletedProcess(
+            args=["wsl.exe"], returncode=0, stdout="", stderr=""
+        )
+        with (
+            mock.patch.object(wsl_bridge, "IS_WINDOWS", True),
+            mock.patch.object(wsl_bridge.shutil, "which", return_value="wsl.exe"),
+            mock.patch.object(
+                wsl_bridge.subprocess,
+                "run",
+                side_effect=[listed, started],
+            ) as run,
+        ):
+            ok, message = wsl_bridge.check_wsl_available()
+
+        self.assertTrue(ok)
+        self.assertEqual(message, "Ubuntu")
+        self.assertIn("--distribution", run.call_args.args[0])
+
     def test_wrap_on_unix_sources_conda_before_conda_run(self):
         with (
             mock.patch.object(wsl_bridge, "IS_WINDOWS", False),

@@ -1,0 +1,31 @@
+[run]
+source = .
+omit =
+    tests/*
+    dist/*
+    build/MolDynStudio/*
+    analysis/contact_map.py
+    analysis/dihedral.py
+    analysis/dssp.py
+    analysis/gyration.py
+    analysis/pca.py
+    analysis/sasa.py
+    build/create_installer.py
+    gromacs_analysis_studio_v11.py
+    main.py
+    settings_dialog.py
+    setup_environment.py
+    setup_wizard.py
+    tabs/analysis_tab.py
+    tabs/base.py
+    tabs/md_run_tab.py
+    windows/*
+    pyscript
+
+[report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
