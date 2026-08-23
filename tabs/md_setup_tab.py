@@ -24,8 +24,14 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QThread, Qt, pyqtSignal
 
+from core.forcefield_manager import (
+    CHARMM36_ARCHIVE_NAME,
+    cached_force_field_dir,
+    install_charmm36_archive,
+    is_valid_force_field,
+)
 from core.system_prep import SystemPrepParams, SystemPrepWorker
 from tabs.base import MolDynBasePage, PathSelector
 from utils.file_validators import validate_md_inputs
@@ -33,6 +39,24 @@ from utils.mdp_generator import MDParameters, generate_all_mdp
 from utils.tooltips import tooltip
 from utils.topology_builder import LigandParams, LigandParamWorker
 from windows.mdp_editor import MDPEditor
+
+
+class ForceFieldImportWorker(QThread):
+    """Validate and install a force-field archive without blocking the UI."""
+
+    done = pyqtSignal(bool, str)
+
+    def __init__(self, archive: str, parent=None):
+        super().__init__(parent)
+        self.archive = archive
+
+    def run(self) -> None:
+        try:
+            installed = install_charmm36_archive(self.archive)
+        except (OSError, ValueError) as exc:
+            self.done.emit(False, str(exc))
+            return
+        self.done.emit(True, str(installed))
 
 
 class MDSetupTab(MolDynBasePage):
@@ -63,6 +87,7 @@ class MDSetupTab(MolDynBasePage):
         self._build_steps(left_layout)
         self._build_production(left_layout)
         left_layout.addStretch(1)
+        self._refresh_charmm_status()
 
         file_group = QGroupBox("Project File Tree")
         file_layout = QVBoxLayout(file_group)
@@ -103,6 +128,17 @@ class MDSetupTab(MolDynBasePage):
         self.fields["force_field"].setToolTip(tooltip("force_field"))
         form.addRow("Force Field", self.fields["force_field"])
 
+        charmm_package = QWidget()
+        charmm_layout = QHBoxLayout(charmm_package)
+        charmm_layout.setContentsMargins(0, 0, 0, 0)
+        self.charmm_status = QLabel()
+        self.charmm_status.setWordWrap(True)
+        charmm_layout.addWidget(self.charmm_status, 1)
+        self.charmm_import_button = QPushButton("Import package…")
+        self.charmm_import_button.clicked.connect(self._import_charmm_package)
+        charmm_layout.addWidget(self.charmm_import_button)
+        form.addRow("Offline CHARMM36m", charmm_package)
+
         self.fields["water_model"] = QComboBox()
         self.fields["water_model"].addItems(["TIP3P", "SPC/E", "TIP4P-Ew"])
         self.fields["water_model"].setToolTip(tooltip("water_model"))
@@ -131,16 +167,18 @@ class MDSetupTab(MolDynBasePage):
         group = QGroupBox("Ligand Parameterization")
         layout = QVBoxLayout(group)
         row = QHBoxLayout()
-        self.acpype = QRadioButton("ACPYPE")
+        self.acpype = QRadioButton("ACPYPE / GAFF2 (AMBER-family)")
         self.acpype.setChecked(True)
         self.acpype.setToolTip(tooltip("parameterization"))
-        self.cgenff = QRadioButton("CGenFF")
-        self.gaff2 = QRadioButton("GAFF2")
         row.addWidget(self.acpype)
-        row.addWidget(self.cgenff)
-        row.addWidget(self.gaff2)
         row.addStretch(1)
         layout.addLayout(row)
+        self.ligand_compatibility = QLabel()
+        self.ligand_compatibility.setWordWrap(True)
+        self.ligand_compatibility.setAccessibleName(
+            "Ligand force-field compatibility"
+        )
+        layout.addWidget(self.ligand_compatibility)
 
         form = QFormLayout()
         self.fields["charge_method"] = QComboBox()
@@ -152,10 +190,20 @@ class MDSetupTab(MolDynBasePage):
         form.addRow("Charge", self.fields["charge"])
         layout.addLayout(form)
 
-        button = QPushButton("Generate Topology")
-        button.clicked.connect(self.generate_topology_preview)
-        layout.addWidget(button)
+        self.generate_topology_button = QPushButton("Generate Topology")
+        self.generate_topology_button.clicked.connect(
+            self.generate_topology_preview
+        )
+        layout.addWidget(self.generate_topology_button)
         parent.addWidget(group)
+
+        self.fields["force_field"].currentTextChanged.connect(
+            self._refresh_ligand_compatibility
+        )
+        self.fields["ligand"].line_edit.textChanged.connect(
+            self._refresh_ligand_compatibility
+        )
+        self._refresh_ligand_compatibility()
 
     def _build_steps(self, parent: QVBoxLayout) -> None:
         group = QGroupBox("Steps to Run")
@@ -247,10 +295,10 @@ class MDSetupTab(MolDynBasePage):
         root.setExpanded(True)
 
     def generate_topology_preview(self) -> None:
-        method = "ACPYPE" if self.acpype.isChecked() else "CGenFF" if self.cgenff.isChecked() else "GAFF2"
         protein_path = self.fields["protein"].text().strip()
         ligand_path = self.fields["ligand"].text().strip()
         work_dir = self.fields["project_dir"].text().strip()
+        force_field = self.fields["force_field"].currentText()
 
         if not protein_path or not work_dir:
             QMessageBox.warning(
@@ -260,11 +308,24 @@ class MDSetupTab(MolDynBasePage):
             )
             return
 
+        if ligand_path and not force_field.upper().startswith("AMBER"):
+            QMessageBox.warning(
+                self,
+                "Incompatible ligand workflow",
+                "Automatic CGenFF ligand generation is not bundled. "
+                "For a non-covalent ligand, choose an AMBER-family protein "
+                "force field and use the built-in ACPYPE/GAFF2 workflow. "
+                "CHARMM36m remains available offline for systems whose "
+                "residues already exist in its locally installed topology "
+                "library.",
+            )
+            return
+
         self._prep_worker = SystemPrepWorker(
             SystemPrepParams(
                 pdb_path=protein_path,
                 work_dir=work_dir,
-                force_field=self.fields["force_field"].currentText(),
+                force_field=force_field,
                 water_model=self.fields["water_model"].currentText(),
                 box_type=self.fields["box_type"].currentText(),
                 box_padding_nm=float(self.fields["box_padding"].value()),
@@ -284,7 +345,7 @@ class MDSetupTab(MolDynBasePage):
         )
         self._prep_worker.start()
 
-        if ligand_path and method == "ACPYPE":
+        if ligand_path:
             self._lig_worker = LigandParamWorker(
                 LigandParams(
                     ligand_path=ligand_path,
@@ -302,11 +363,140 @@ class MDSetupTab(MolDynBasePage):
             )
             self.request_log.emit("Starting ACPYPE ligand parameterization.")
             self._lig_worker.start()
-        elif ligand_path:
-            self.request_log.emit(
-                f"Ligand provided but {method} backend is not yet implemented; "
-                "skipping ligand step."
+
+    def _select_charmm_archive(self) -> str:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import official CHARMM36m package",
+            "",
+            (
+                f"CHARMM36m package ({CHARMM36_ARCHIVE_NAME});;"
+                "Compressed archives (*.tgz *.tar.gz);;All Files (*)"
+            ),
+        )
+        return path
+
+    def _refresh_charmm_status(self) -> None:
+        cached = cached_force_field_dir()
+        if is_valid_force_field(cached):
+            self.charmm_status.setText(
+                "Ready offline — CHARMM36m February 2026"
             )
+            self.charmm_status.setToolTip(str(cached))
+            self.charmm_status.setStyleSheet(
+                "color: #176B37; font-weight: 600;"
+            )
+            self.charmm_import_button.setText("Verify package…")
+        else:
+            self.charmm_status.setText(
+                "Action needed — import the official package once"
+            )
+            self.charmm_status.setToolTip(
+                "After import, CHARMM36m simulations run without Internet."
+            )
+            self.charmm_status.setStyleSheet(
+                "color: #805200; font-weight: 600;"
+            )
+            self.charmm_import_button.setText("Import package…")
+
+    def _refresh_ligand_compatibility(self) -> None:
+        ligand_selected = bool(self.fields["ligand"].text().strip())
+        force_field = self.fields["force_field"].currentText()
+        is_amber = force_field.upper().startswith("AMBER")
+        is_charmm = force_field.upper().startswith("CHARMM")
+        if is_charmm:
+            self.fields["water_model"].setCurrentText("TIP3P")
+            self.fields["water_model"].setEnabled(False)
+            self.fields["water_model"].setToolTip(
+                "CHARMM36m uses the compatible modified TIP3P water model "
+                "from the locally installed force-field package."
+            )
+        else:
+            self.fields["water_model"].setEnabled(True)
+            self.fields["water_model"].setToolTip(tooltip("water_model"))
+
+        controls_enabled = ligand_selected and is_amber
+        self.acpype.setEnabled(controls_enabled)
+        self.fields["charge_method"].setEnabled(controls_enabled)
+        self.fields["charge"].setEnabled(controls_enabled)
+
+        if ligand_selected and not is_amber:
+            text = (
+                "Blocked — arbitrary ligand parameters cannot be generated "
+                f"safely for {force_field}. Choose an AMBER force field for "
+                "the built-in non-covalent ACPYPE/GAFF2 workflow."
+            )
+            color = "#A12622"
+        elif ligand_selected:
+            text = (
+                "Ready — the selected ligand will use ACPYPE/GAFF2 with the "
+                "AMBER-family protein force field."
+            )
+            color = "#176B37"
+        else:
+            text = (
+                "Optional — select a separate non-covalent ligand to enable "
+                "ACPYPE/GAFF2 parameters."
+            )
+            color = "#555555"
+        self.ligand_compatibility.setText(text)
+        self.ligand_compatibility.setStyleSheet(f"color: {color};")
+
+    def _import_charmm_package(self) -> None:
+        archive = self._select_charmm_archive()
+        if not archive:
+            return
+        self.charmm_import_button.setEnabled(False)
+        self.charmm_import_button.setText("Checking package…")
+        self.charmm_status.setText(
+            "Checking checksum and installing local files…"
+        )
+        self.charmm_status.setToolTip("")
+        self.charmm_status.setStyleSheet(
+            "color: #2C5F8A; font-weight: 600;"
+        )
+        self._force_field_import_worker = ForceFieldImportWorker(
+            archive,
+            parent=self,
+        )
+        self._force_field_import_worker.done.connect(
+            self._finish_charmm_import
+        )
+        self._force_field_import_worker.start()
+
+    def _finish_charmm_import(self, ok: bool, detail: str) -> None:
+        self.charmm_import_button.setEnabled(True)
+        if not ok:
+            self.charmm_status.setText(
+                "Import failed — select the official February 2026 package"
+            )
+            self.charmm_status.setToolTip(detail)
+            self.charmm_status.setStyleSheet(
+                "color: #A12622; font-weight: 600;"
+            )
+            self.charmm_import_button.setText("Try again…")
+            QMessageBox.warning(
+                self,
+                "CHARMM36m import failed",
+                detail,
+            )
+            return
+        installed = Path(detail)
+        self.charmm_status.setText(
+            "Ready offline — CHARMM36m February 2026"
+        )
+        self.charmm_status.setToolTip(str(installed))
+        self.charmm_status.setStyleSheet(
+            "color: #176B37; font-weight: 600;"
+        )
+        self.charmm_import_button.setText("Verify package…")
+        self.request_log.emit(f"[OK] Offline CHARMM36m installed at {installed}.")
+        QMessageBox.information(
+            self,
+            "CHARMM36m ready",
+            "CHARMM36m was validated and installed locally. Future "
+            "simulations do not need Internet access.",
+        )
 
     def save_mdp_files(self) -> None:
         default_dir = self.fields["project_dir"].text()
@@ -338,4 +528,3 @@ class MDSetupTab(MolDynBasePage):
             f"Production: {params.duration_ns:.3f} ns, dt {params.timestep_fs:.3f} fs\n\n"
             f"{validation}"
         )
-

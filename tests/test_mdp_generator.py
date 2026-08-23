@@ -24,7 +24,17 @@ class MDPGeneratorTests(unittest.TestCase):
         self.assertGreater(normalized.timestep_fs, 0)
         self.assertGreater(normalized.save_every_ps, 0)
 
+    def test_charmm36_uses_force_switch_nonbonded_settings(self):
+        content = generate_production_mdp(
+            MDParameters(force_field="CHARMM36m", duration_ns=0.001)
+        )
+
+        self.assertIn("vdw-modifier            = force-switch", content)
+        self.assertIn("rvdw-switch             = 1.0", content)
+        self.assertIn("rvdw                    = 1.2", content)
+        self.assertIn("rcoulomb                = 1.2", content)
+        self.assertIn("DispCorr                = no", content)
+
 
 if __name__ == "__main__":
     unittest.main()
-

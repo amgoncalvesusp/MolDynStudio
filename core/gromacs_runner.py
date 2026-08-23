@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import os
-import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from core import wsl_bridge
 
@@ -97,10 +95,10 @@ class GROMACSRunner(QThread):
                 self.finished_with_status.emit(False, -1)
                 return
             inner_cmd = [spec.executable, *spec.args]
-            use_bridge = (
-                os.name == "nt"
-                and shutil.which("wsl") is not None
-                and spec.use_conda
+            # The bridge is also required on native Linux: GUI launches often
+            # do not source the user's Conda profile, while the bridge does.
+            use_bridge = spec.use_conda and (
+                os.name != "nt" or shutil.which("wsl") is not None
             )
             try:
                 if use_bridge:

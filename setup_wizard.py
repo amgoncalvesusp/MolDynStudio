@@ -18,7 +18,6 @@ from typing import Callable, Optional
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
-    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,

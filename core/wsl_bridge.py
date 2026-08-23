@@ -350,7 +350,7 @@ def check_gmx(env_name: str = DEFAULT_ENV) -> tuple[bool, str]:
         return False, f"gmx probe failed: {exc}"
     if r.returncode == 0:
         version = next(
-            (l.strip() for l in r.stdout.splitlines() if "GROMACS version" in l),
+            (line.strip() for line in r.stdout.splitlines() if "GROMACS version" in line),
             "gmx OK",
         )
         return True, version

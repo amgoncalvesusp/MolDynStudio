@@ -33,7 +33,9 @@ TOOLTIPS: Mapping[str, str] = {
     ),
     "parameterization": (
         "<b>Ligand parameterization</b><br>"
-        "ACPYPE/GAFF2 are common AMBER-family choices; CGenFF is better aligned with CHARMM workflows."
+        "The built-in ACPYPE/GAFF2 workflow supports non-covalent ligands "
+        "with AMBER-family protein force fields. Automatic CGenFF generation "
+        "is not bundled."
     ),
     "mm_gbsa": (
         "<b>MM-GBSA</b><br>"
@@ -55,4 +57,3 @@ TOOLTIPS: Mapping[str, str] = {
 
 def tooltip(key: str) -> str:
     return TOOLTIPS.get(key, "")
-

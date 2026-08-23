@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Mapping
 
-from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QTextCharFormat, QSyntaxHighlighter
 from PyQt5.QtWidgets import QComboBox, QHBoxLayout, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
@@ -73,7 +71,7 @@ class CpptrajBuilderWidget(QWidget):
         script = self.editor.toPlainText()
         try:
             completed = wsl_bridge.run(
-                ["cpptraj", "-i", "-"],
+                ["cpptraj"],
                 input=script,
                 check=False,
             )

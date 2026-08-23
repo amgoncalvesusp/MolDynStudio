@@ -41,6 +41,37 @@ class WSLBridgePathTests(unittest.TestCase):
 
 
 class WSLBridgeWrapTests(unittest.TestCase):
+    def test_check_wsl_available_rejects_a_listed_distro_that_cannot_start(self):
+        listed = wsl_bridge.subprocess.CompletedProcess(
+            args=["wsl.exe", "--list", "--quiet"],
+            returncode=0,
+            stdout="Ubuntu-24.04\n",
+            stderr="",
+        )
+        failed_to_start = wsl_bridge.subprocess.CompletedProcess(
+            args=["wsl.exe", "--", "true"],
+            returncode=1,
+            stdout="",
+            stderr=(
+                "WSL2 cannot start because virtualization is disabled "
+                "(HCS_E_HYPERV_NOT_INSTALLED)"
+            ),
+        )
+        with (
+            mock.patch.object(wsl_bridge, "IS_WINDOWS", True),
+            mock.patch.object(wsl_bridge.shutil, "which", return_value="wsl.exe"),
+            mock.patch.object(
+                wsl_bridge.subprocess,
+                "run",
+                side_effect=[listed, failed_to_start],
+            ) as run,
+        ):
+            ok, message = wsl_bridge.check_wsl_available()
+
+        self.assertFalse(ok)
+        self.assertIn("virtualization", message.lower())
+        self.assertEqual(run.call_count, 2)
+
     def test_wrap_on_unix_sources_conda_before_conda_run(self):
         with (
             mock.patch.object(wsl_bridge, "IS_WINDOWS", False),

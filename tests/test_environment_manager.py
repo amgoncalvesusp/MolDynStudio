@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from subprocess import CompletedProcess
+from unittest import mock
 
-from core.environment_manager import build_conda_install_command, package_import_name
+from core import environment_manager
+from core.environment_manager import (
+    DependencyChecker,
+    build_conda_install_command,
+    package_import_name,
+)
 from core.environment_manager import REQUIRED_PACKAGES
 from core.gromacs_runner import CommandSpec, GromacsCommandBuilder
 
@@ -23,6 +31,14 @@ class EnvironmentManagerTests(unittest.TestCase):
         self.assertNotIn("nglview", REQUIRED_PACKAGES)
         self.assertIn("acpype", REQUIRED_PACKAGES)
 
+    def test_scientific_environment_keeps_ambertools_and_mdtraj_compatible(self):
+        environment_file = Path(__file__).resolve().parents[1] / "environment.yml"
+        contents = environment_file.read_text(encoding="utf-8")
+
+        self.assertIn("ambertools=23", contents)
+        self.assertIn("mdtraj<1.11", contents)
+        self.assertIn("numpy>=1.26,<2", contents)
+
     def test_build_conda_command_includes_pip_specs(self):
         command = build_conda_install_command(["conda-forge::numpy", "pip::py3dmol"], "moldynstudio")
         self.assertIn("&&", command)
@@ -40,6 +56,41 @@ class EnvironmentManagerTests(unittest.TestCase):
     def test_gromacs_builder_keeps_subcommand_first(self):
         spec = GromacsCommandBuilder(conda_env="moldynstudio", executable="gmx").build("rmsd", ["-s", "topol.tpr"])
         self.assertIn("rmsd", spec.args)
+
+    def test_dependency_check_runs_inside_scientific_environment(self):
+        completed = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with mock.patch.object(
+            environment_manager.wsl_bridge,
+            "run",
+            return_value=completed,
+        ) as run:
+            installed = DependencyChecker().is_installed("mdanalysis")
+
+        self.assertTrue(installed)
+        self.assertEqual(run.call_args.kwargs["env_name"], "moldynstudio")
+        self.assertIn("MDAnalysis", run.call_args.args[0][-1])
+
+    def test_install_missing_uses_bridge_without_shell(self):
+        completed = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with (
+            mock.patch.object(
+                environment_manager.wsl_bridge,
+                "run_raw",
+                return_value=completed,
+            ) as run_raw,
+            mock.patch.object(
+                environment_manager.wsl_bridge,
+                "run",
+                return_value=completed,
+            ) as run,
+        ):
+            result = DependencyChecker().install_missing(
+                ["conda-forge::numpy", "pip::py3dmol"]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(run_raw.call_args.args[0][0:2], ["conda", "install"])
+        self.assertEqual(run.call_args.args[0][0:4], ["python", "-m", "pip", "install"])
 
 
 if __name__ == "__main__":

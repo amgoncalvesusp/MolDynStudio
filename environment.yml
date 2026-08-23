@@ -9,11 +9,11 @@ dependencies:
   - ambertools=23
   - gmx_mmpbsa
   - mdanalysis
-  - mdtraj
+  - mdtraj<1.11
   - prody
   - matplotlib
   - seaborn
-  - numpy
+  - numpy>=1.26,<2
   - pandas
   - scipy
   - openpyxl

@@ -12,8 +12,8 @@ Two modes:
 
 from __future__ import annotations
 
-import importlib.util
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -39,15 +39,34 @@ def _resource_root() -> Path:
 
 
 def _import_check(module_name: str) -> tuple[bool, str]:
-    spec = importlib.util.find_spec(module_name)
-    if spec is None:
-        return False, f"{module_name} not importable"
-    return True, f"{module_name} OK"
+    try:
+        result = wsl_bridge.run(
+            [
+                "python",
+                "-c",
+                (
+                    "import importlib.util,sys;"
+                    f"sys.exit(0 if importlib.util.find_spec({module_name!r}) else 1)"
+                ),
+            ],
+            timeout=60,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        return False, f"{module_name} probe failed: {exc}"
+    if result.returncode == 0:
+        return True, f"{module_name} OK"
+    detail = (result.stderr or result.stdout or "").strip()
+    return False, f"{module_name} not importable: {detail[:120]}"
 
 
 def _gmx_mmpbsa_check() -> tuple[bool, str]:
     try:
-        result = wsl_bridge.run(["gmx_MMPBSA", "--version"], timeout=60)
+        with tempfile.TemporaryDirectory(prefix="moldynstudio-mmpbsa-check-") as temp_dir:
+            result = wsl_bridge.run(
+                ["gmx_MMPBSA", "--version"],
+                cwd=temp_dir,
+                timeout=60,
+            )
     except Exception as exc:  # pragma: no cover - defensive
         return False, f"gmx_MMPBSA probe failed: {exc}"
     if result.returncode == 0:

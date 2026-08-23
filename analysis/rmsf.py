@@ -18,5 +18,4 @@ class RMSFAnalysis(AnalysisBase):
         atoms = universe.select_atoms(selection)
         analysis = rms.RMSF(atoms)
         analysis.run()
-        return AnalysisResult(self.name, analysis.rmsf, "RMSF values match the selected atom order.")
-
+        return AnalysisResult(self.name, analysis.results.rmsf, "RMSF values match the selected atom order.")

@@ -45,6 +45,27 @@ def _steps_for(params: MDParameters) -> tuple[int, int]:
     return nsteps, nstxout
 
 
+def _nonbonded_settings(params: MDParameters) -> str:
+    if params.force_field.upper().startswith("CHARMM"):
+        return """cutoff-scheme           = Verlet
+nstlist                 = 20
+rlist                   = 1.2
+vdwtype                 = cutoff
+vdw-modifier            = force-switch
+rvdw-switch             = 1.0
+rvdw                    = 1.2
+coulombtype             = PME
+rcoulomb                = 1.2
+DispCorr                = no
+pbc                     = xyz"""
+    return """cutoff-scheme           = Verlet
+nstlist                 = 20
+rvdw                    = 1.0
+rcoulomb                = 1.0
+coulombtype             = PME
+pbc                     = xyz"""
+
+
 def generate_minimization_mdp(params: MDParameters) -> str:
     params = params.normalized()
     return f"""; MolDynStudio energy minimization
@@ -52,12 +73,7 @@ integrator              = steep
 emtol                   = 1000.0
 emstep                  = 0.01
 nsteps                  = 50000
-cutoff-scheme           = Verlet
-nstlist                 = 20
-rvdw                    = 1.0
-rcoulomb                = 1.0
-coulombtype             = PME
-pbc                     = xyz
+{_nonbonded_settings(params)}
 ; Force field: {params.force_field}
 ; Water model: {params.water_model}
 """
@@ -76,17 +92,12 @@ nstlog                  = 500
 continuation            = no
 constraint_algorithm    = lincs
 constraints             = h-bonds
-cutoff-scheme           = Verlet
-nstlist                 = 20
-rvdw                    = 1.0
-rcoulomb                = 1.0
-coulombtype             = PME
+{_nonbonded_settings(params)}
 tcoupl                  = V-rescale
 tc-grps                 = Protein Non-Protein
 tau_t                   = 0.1 0.1
 ref_t                   = {params.temperature_k:.1f} {params.temperature_k:.1f}
 pcoupl                  = no
-pbc                     = xyz
 gen_vel                 = yes
 gen_temp                = {params.temperature_k:.1f}
 gen_seed                = -1
@@ -106,11 +117,7 @@ nstlog                  = 500
 continuation            = yes
 constraint_algorithm    = lincs
 constraints             = h-bonds
-cutoff-scheme           = Verlet
-nstlist                 = 20
-rvdw                    = 1.0
-rcoulomb                = 1.0
-coulombtype             = PME
+{_nonbonded_settings(params)}
 tcoupl                  = V-rescale
 tc-grps                 = Protein Non-Protein
 tau_t                   = 0.1 0.1
@@ -120,7 +127,6 @@ pcoupltype              = isotropic
 tau_p                   = 2.0
 ref_p                   = {params.pressure_bar:.3f}
 compressibility         = 4.5e-5
-pbc                     = xyz
 gen_vel                 = no
 """
 
@@ -138,11 +144,7 @@ nstlog                  = {nstxout}
 continuation            = yes
 constraint_algorithm    = lincs
 constraints             = h-bonds
-cutoff-scheme           = Verlet
-nstlist                 = 20
-rvdw                    = 1.0
-rcoulomb                = 1.0
-coulombtype             = PME
+{_nonbonded_settings(params)}
 tcoupl                  = V-rescale
 tc-grps                 = Protein Non-Protein
 tau_t                   = 0.1 0.1
@@ -152,7 +154,6 @@ pcoupltype              = isotropic
 tau_p                   = 2.0
 ref_p                   = {params.pressure_bar:.3f}
 compressibility         = 4.5e-5
-pbc                     = xyz
 gen_vel                 = no
 """
 
@@ -166,4 +167,3 @@ def generate_all_mdp(params: MDParameters) -> Dict[str, str]:
         "npt.mdp": generate_npt_mdp(params),
         "md.mdp": generate_production_mdp(params),
     }
-

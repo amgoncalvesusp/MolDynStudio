@@ -6,11 +6,15 @@ from pathlib import Path
 from typing import Iterable
 
 from PyQt5.QtWidgets import QFileDialog, QMainWindow, QToolBar
+from core.matplotlib_qt import configure_pyqt5_backend, is_pyqt5_widget_type
 
 try:
+    configure_pyqt5_backend()
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT
     from matplotlib.figure import Figure
+    if not is_pyqt5_widget_type(FigureCanvas):
+        raise ImportError("Matplotlib selected a non-PyQt5 Qt binding")
 except Exception:  # pragma: no cover
     FigureCanvas = None  # type: ignore[assignment]
     NavigationToolbar2QT = None  # type: ignore[assignment]
@@ -56,4 +60,3 @@ class PlotWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export plot", str(Path.home() / "plot.png"), "Images (*.png *.svg)")
         if path:
             self.figure.savefig(path)
-

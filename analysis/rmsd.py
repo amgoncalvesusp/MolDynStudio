@@ -18,5 +18,4 @@ class RMSDAnalysis(AnalysisBase):
         atoms = universe.select_atoms(selection)
         analysis = rms.RMSD(atoms, ref_frame=reference_frame)
         analysis.run()
-        return AnalysisResult(self.name, analysis.rmsd, "Columns: frame, time, RMSD.")
-
+        return AnalysisResult(self.name, analysis.results.rmsd, "Columns: frame, time, RMSD.")

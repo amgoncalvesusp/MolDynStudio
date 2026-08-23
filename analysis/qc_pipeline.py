@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shlex
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Iterable
 
 from core import wsl_bridge
@@ -49,12 +49,22 @@ class QCTask:
 
 def default_qc_output_dir(trajectory: str) -> str:
     if trajectory:
-        return str(Path(trajectory).expanduser().parent / "qc_xvg")
+        return str(_host_path(trajectory).parent / "qc_xvg")
     return str(Path.home() / "MolDynStudio" / "qc_xvg")
 
 
 def expected_output_files(inputs: QCPipelineInputs) -> tuple[str, ...]:
-    return tuple(str(Path(inputs.output_dir) / task.output_file) for task in build_qc_tasks(inputs))
+    output_dir = _host_path(inputs.output_dir)
+    return tuple(str(output_dir / task.output_file) for task in build_qc_tasks(inputs))
+
+
+def _host_path(path: str) -> Path | PureWindowsPath:
+    """Preserve Windows path semantics even when inspected from Linux/WSL."""
+
+    windows_path = PureWindowsPath(path)
+    if windows_path.drive or path.startswith(("\\\\", "//")):
+        return windows_path
+    return Path(path).expanduser()
 
 
 def build_qc_tasks(inputs: QCPipelineInputs) -> tuple[QCTask, ...]:

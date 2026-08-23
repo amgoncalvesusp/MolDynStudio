@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from core.matplotlib_qt import configure_pyqt5_backend, is_pyqt5_widget_type
 from analysis.qc import (
     QCSummary,
     compare_replicates,
@@ -29,8 +30,11 @@ from analysis.qc import (
 )
 
 try:
+    configure_pyqt5_backend()
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
+    if not is_pyqt5_widget_type(FigureCanvas):
+        raise ImportError("Matplotlib selected a non-PyQt5 Qt binding")
 except Exception:  # pragma: no cover
     FigureCanvas = None  # type: ignore[assignment]
     Figure = None  # type: ignore[assignment]

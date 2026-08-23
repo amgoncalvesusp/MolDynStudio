@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import base64
 import io
-import os
 import stat
 import tarfile
 from pathlib import Path

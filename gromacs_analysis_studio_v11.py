@@ -38,11 +38,9 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QProgressBar,
     QScrollArea,
-    QSizePolicy,
     QSpinBox,
     QSplitter,
     QStackedWidget,
-    QStatusBar,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -60,10 +58,14 @@ from tabs.md_run_tab import MDRunTab
 from tabs.md_setup_tab import MDSetupTab
 from tabs.qc_dashboard_tab import QCDashboardWidget
 from windows.help_dialog import HelpDialog
+from core.matplotlib_qt import configure_pyqt5_backend, is_pyqt5_widget_type
 
 try:
+    configure_pyqt5_backend()
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
+    if not is_pyqt5_widget_type(FigureCanvas):
+        raise ImportError("Matplotlib selected a non-PyQt5 Qt binding")
     MATPLOTLIB_OK = True
 except Exception:
     MATPLOTLIB_OK = False
@@ -72,7 +74,7 @@ except Exception:
 
 
 APP_NAME = "MolDynStudio"
-APP_VERSION = "v1.0.1"
+APP_VERSION = "v1.0.2"
 APP_INVENTOR = "Adriano Marques Gonçalves (UNIARA)"
 
 NAV_ITEMS = [

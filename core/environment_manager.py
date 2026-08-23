@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
-import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import Mapping
+
+from core import wsl_bridge
 
 try:
     from PyQt5.QtCore import QThread, pyqtSignal
@@ -103,17 +104,68 @@ class DependencyChecker(QThread):
         self.all_done.emit(not missing)
 
     def is_installed(self, package: str) -> bool:
-        if package in {"gromacs", "ambertools", "acpype"}:
-            executables = {
-                "gromacs": "gmx",
-                "ambertools": "cpptraj",
-                "acpype": "acpype",
-            }
-            return shutil.which(executables[package]) is not None
-        return is_python_package_installed(package)
+        executable = {
+            "gromacs": "gmx",
+            "ambertools": "cpptraj",
+            "acpype": "acpype",
+        }.get(package)
+        if executable:
+            probe = [
+                "python",
+                "-c",
+                (
+                    "import shutil,sys;"
+                    f"sys.exit(0 if shutil.which({executable!r}) else 1)"
+                ),
+            ]
+        else:
+            module_name = package_import_name(package)
+            probe = [
+                "python",
+                "-c",
+                (
+                    "import importlib.util,sys;"
+                    f"sys.exit(0 if importlib.util.find_spec({module_name!r}) else 1)"
+                ),
+            ]
+        try:
+            result = wsl_bridge.run(probe, env_name=self.env_name, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
 
     def install_missing(self, specs: list[str]) -> int:
-        command = build_conda_install_command(specs, self.env_name)
-        if "&&" in command:
-            return subprocess.call(" ".join(command), shell=True)
-        return subprocess.call(command)
+        conda_specs = [
+            spec.split("::", 1)[1]
+            for spec in specs
+            if not spec.startswith("pip::")
+        ]
+        pip_specs = [
+            spec.split("::", 1)[1]
+            for spec in specs
+            if spec.startswith("pip::")
+        ]
+        if conda_specs:
+            result = wsl_bridge.run_raw(
+                [
+                    "conda",
+                    "install",
+                    "-n",
+                    self.env_name,
+                    "-c",
+                    "conda-forge",
+                    *conda_specs,
+                    "-y",
+                ],
+                timeout=60 * 60,
+            )
+            if result.returncode != 0:
+                return result.returncode
+        if pip_specs:
+            result = wsl_bridge.run(
+                ["python", "-m", "pip", "install", *pip_specs],
+                env_name=self.env_name,
+                timeout=60 * 60,
+            )
+            return result.returncode
+        return 0

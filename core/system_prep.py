@@ -34,13 +34,24 @@ except Exception:  # pragma: no cover - allow headless import
         def start(self) -> None: self.run()
 
 from core import wsl_bridge
+from core.forcefield_manager import (
+    CHARMM36_BASENAME,
+    ForceFieldUnavailableError,
+    stage_charmm36_force_field,
+)
+from utils.structure_validation import (
+    CovalentLigandError,
+    ensure_noncovalent_complex,
+)
 
 
 FORCE_FIELD_MAP: Mapping[str, str] = {
     "AMBER99SB-ILDN": "amber99sb-ildn",
     "AMBER14SB": "amber14sb",
-    "CHARMM36m": "charmm36m",
-    "CHARMM36": "charmm36",
+    "CHARMM36m": CHARMM36_BASENAME,
+    # Legacy project files used this label. Upgrade them to the current
+    # CHARMM36m port because the February 2026 package rejects USE_OLD_C36.
+    "CHARMM36": CHARMM36_BASENAME,
     "OPLS-AA": "oplsaa",
     "GROMOS96 54A7": "gromos54a7",
 }
@@ -53,16 +64,30 @@ WATER_MODEL_MAP: Mapping[str, str] = {
     "TIP4P": "tip4p",
 }
 
-IONS_MDP = """; MolDynStudio - minimization preset for ion addition
+def build_ions_mdp(force_field: str) -> str:
+    if force_field.upper().startswith("CHARMM"):
+        nonbonded = """cutoff-scheme = Verlet
+nstlist       = 20
+rlist         = 1.2
+vdwtype       = cutoff
+vdw-modifier  = force-switch
+rvdw-switch   = 1.0
+rvdw          = 1.2
+coulombtype   = PME
+rcoulomb      = 1.2
+DispCorr      = no"""
+    else:
+        nonbonded = """cutoff-scheme = Verlet
+nstlist       = 10
+rcoulomb      = 1.0
+rvdw          = 1.0
+coulombtype   = PME"""
+    return f"""; MolDynStudio - minimization preset for ion addition
 integrator      = steep
 emtol           = 1000.0
 emstep          = 0.01
 nsteps           = 50000
-cutoff-scheme   = Verlet
-nstlist         = 10
-rcoulomb        = 1.0
-rvdw            = 1.0
-coulombtype     = PME
+{nonbonded}
 pbc             = xyz
 """
 
@@ -98,6 +123,9 @@ class SystemPrepWorker(QThread):
         ff = FORCE_FIELD_MAP.get(p.force_field, p.force_field.lower())
         wm = WATER_MODEL_MAP.get(p.water_model, p.water_model.lower())
         wsl_pdb = wsl_bridge.win_to_wsl(p.pdb_path)
+        is_charmm = p.force_field.upper().startswith("CHARMM")
+        positive_ion = "SOD" if is_charmm and p.ion_pos == "NA" else p.ion_pos
+        negative_ion = "CLA" if is_charmm and p.ion_neg == "CL" else p.ion_neg
 
         return [
             (
@@ -151,24 +179,49 @@ class SystemPrepWorker(QThread):
                     "-s", "ions.tpr",
                     "-o", "system.gro",
                     "-p", "topol.top",
-                    "-pname", p.ion_pos,
-                    "-nname", p.ion_neg,
+                    "-pname", positive_ion,
+                    "-nname", negative_ion,
                     "-neutral",
                     "-conc", f"{p.ion_concentration_m:.4f}",
                 ],
             ),
         ]
 
+    def _ensure_force_field(self) -> None:
+        if not self.p.force_field.upper().startswith("CHARMM36"):
+            return
+        self.log.emit(
+            "Staging locally installed CHARMM36m February 2026 force field..."
+        )
+        stage_charmm36_force_field(Path(self.p.work_dir))
+
     def _ensure_ions_mdp(self) -> None:
         target = Path(self.p.work_dir) / "ions.mdp"
-        if not target.exists():
-            target.write_text(IONS_MDP, encoding="utf-8")
+        target.write_text(
+            build_ions_mdp(self.p.force_field),
+            encoding="utf-8",
+        )
 
     def run(self) -> None:  # QThread entry point
         try:
             Path(self.p.work_dir).mkdir(parents=True, exist_ok=True)
+            # Reject UNC/network paths before structure validation performs
+            # any file I/O. WSL cannot map them safely to /mnt/<drive>.
+            if self.p.pdb_path.startswith(("\\\\", "//")):
+                raise ValueError(
+                    "UNC/network paths are not supported. Copy the input "
+                    "structure to a local drive first."
+                )
+            wsl_bridge.win_to_wsl(self.p.pdb_path)
+            ensure_noncovalent_complex(self.p.pdb_path)
+            self._ensure_force_field()
             self._ensure_ions_mdp()
-        except OSError as exc:
+        except (
+            CovalentLigandError,
+            ForceFieldUnavailableError,
+            OSError,
+            ValueError,
+        ) as exc:
             self.done.emit(False, f"Could not prepare work dir: {exc}")
             return
 

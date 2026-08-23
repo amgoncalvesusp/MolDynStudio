@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt5.QtWidgets import QLabel, QMainWindow, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QLabel, QMainWindow
 
 try:
     from PyQt5.QtWebEngineWidgets import QWebEngineView

@@ -13,14 +13,17 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QTextEdit,
     QVBoxLayout,
-    QWidget,
 )
 
 from tabs.base import MolDynBasePage
+from core.matplotlib_qt import configure_pyqt5_backend, is_pyqt5_widget_type
 
 try:
+    configure_pyqt5_backend()
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
+    if not is_pyqt5_widget_type(FigureCanvas):
+        raise ImportError("Matplotlib selected a non-PyQt5 Qt binding")
 except Exception:  # pragma: no cover
     FigureCanvas = None  # type: ignore[assignment]
     Figure = None  # type: ignore[assignment]
@@ -166,4 +169,3 @@ class MDRunTab(MolDynBasePage):
 
     def preview_text(self) -> str:
         return "[MD Run Preview]\nPipeline: Minimization -> NVT -> NPT -> Production MD\nRuntime commands will use conda run -n moldynstudio."
-
