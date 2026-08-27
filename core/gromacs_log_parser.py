@@ -24,6 +24,22 @@ _PRESSURE = re.compile(
 )
 _POTENTIAL = re.compile(rf"\b(?:Epot|Potential)\b\s*=\s*({_FLOAT_PATTERN})\b", re.IGNORECASE)
 _NSTEPS = re.compile(r"^\s*nsteps\s*=\s*(-?\d+)\s*$", re.IGNORECASE)
+_FIXED_COLUMN_WIDTH = 15
+_THERMODYNAMIC_FIELDS = {
+    "potential": "potential_kj_mol",
+    "potential energy": "potential_kj_mol",
+    "temperature": "temperature_k",
+    "temperature (k)": "temperature_k",
+    "pressure": "pressure_bar",
+    "pressure (bar)": "pressure_bar",
+}
+
+
+@dataclass(frozen=True)
+class _ThermodynamicHeader:
+    fields: tuple[tuple[int, str], ...]
+    layout: str
+    column_count: int
 
 
 @dataclass(frozen=True)
@@ -56,6 +72,80 @@ def read_mdp_nsteps(path: str | Path) -> int | None:
     return parsed
 
 
+def _field_for_label(label: str) -> str | None:
+    normalized = " ".join(label.casefold().split())
+    return _THERMODYNAMIC_FIELDS.get(normalized)
+
+
+def _indexed_fields(cells: list[str]) -> tuple[tuple[int, str], ...]:
+    return tuple(
+        (index, field)
+        for index, cell in enumerate(cells)
+        if (field := _field_for_label(cell)) is not None
+    )
+
+
+def _thermodynamic_header(line: str) -> _ThermodynamicHeader | None:
+    if "=" in line:
+        return None
+
+    if "\t" in line:
+        fields = _indexed_fields(line.split("\t"))
+        if fields:
+            return _ThermodynamicHeader(fields, "tab", len(line.split("\t")))
+
+    fixed_cells = [
+        line[offset : offset + _FIXED_COLUMN_WIDTH]
+        for offset in range(0, len(line), _FIXED_COLUMN_WIDTH)
+    ]
+    fields = _indexed_fields(fixed_cells)
+    if fields:
+        return _ThermodynamicHeader(fields, "fixed", len(fixed_cells))
+
+    split_cells = re.split(r"\s{2,}", line.strip())
+    fields = _indexed_fields(split_cells)
+    if fields:
+        return _ThermodynamicHeader(fields, "whitespace", len(split_cells))
+    return None
+
+
+def _value_cells(line: str, header: _ThermodynamicHeader) -> list[str] | None:
+    nonempty_tokens = [token for token in re.split(r"\s+", line.strip()) if token]
+    if not nonempty_tokens or any(
+        re.fullmatch(_FLOAT_PATTERN, token) is None for token in nonempty_tokens
+    ):
+        return None
+
+    if header.layout == "tab":
+        return line.split("\t")
+    if header.layout == "fixed":
+        return [
+            line[offset : offset + _FIXED_COLUMN_WIDTH]
+            for offset in range(0, len(line), _FIXED_COLUMN_WIDTH)
+        ]
+    if len(nonempty_tokens) != header.column_count:
+        return None
+    return nonempty_tokens
+
+
+def _thermodynamic_update(
+    line: str,
+    header: _ThermodynamicHeader,
+) -> MDProgress | None:
+    cells = _value_cells(line, header)
+    if cells is None:
+        return None
+
+    values: dict[str, float] = {}
+    for index, field in header.fields:
+        if index >= len(cells):
+            continue
+        value = cells[index].strip()
+        if value and re.fullmatch(_FLOAT_PATTERN, value) is not None:
+            values[field] = float(value)
+    return MDProgress(**values) if values else None
+
+
 class GromacsLogParser:
     """Consume streamed log lines and emit partial progress snapshots."""
 
@@ -69,6 +159,7 @@ class GromacsLogParser:
         if self.total_steps is None and mdp_path is not None:
             self.total_steps = read_mdp_nsteps(mdp_path)
         self._awaiting_step_time_values = False
+        self._pending_thermodynamic_header: _ThermodynamicHeader | None = None
 
     def feed_line(self, line: str) -> MDProgress | None:
         text = line.strip()
@@ -77,6 +168,7 @@ class GromacsLogParser:
 
         if _STEP_TIME_HEADER.match(text):
             self._awaiting_step_time_values = True
+            self._pending_thermodynamic_header = None
             return None
 
         if self._awaiting_step_time_values:
@@ -88,19 +180,34 @@ class GromacsLogParser:
         inline = _INLINE_PROGRESS.search(text)
         if inline is not None:
             self._awaiting_step_time_values = False
+            self._pending_thermodynamic_header = None
             return self._progress_from_numbers(inline.group(1), inline.group(2))
 
         temperature = _TEMPERATURE.search(text)
         if temperature is not None:
+            self._pending_thermodynamic_header = None
             return MDProgress(temperature_k=float(temperature.group(1)))
 
         pressure = _PRESSURE.search(text)
         if pressure is not None:
+            self._pending_thermodynamic_header = None
             return MDProgress(pressure_bar=float(pressure.group(1)))
 
         potential = _POTENTIAL.search(text)
         if potential is not None:
+            self._pending_thermodynamic_header = None
             return MDProgress(potential_kj_mol=float(potential.group(1)))
+
+        if self._pending_thermodynamic_header is not None:
+            header = self._pending_thermodynamic_header
+            self._pending_thermodynamic_header = None
+            update = _thermodynamic_update(line, header)
+            if update is not None:
+                return update
+
+        header = _thermodynamic_header(line)
+        if header is not None:
+            self._pending_thermodynamic_header = header
 
         return None
 

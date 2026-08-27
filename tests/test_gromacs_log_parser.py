@@ -11,6 +11,14 @@ MDRUN_INLINE_PROGRESS = "step 5000, time 10.000 (ps)"
 MDRUN_TEMPERATURE = "Temperature  =  300.15"
 MDRUN_PRESSURE = "Pressure (bar) =  1.01325e+00"
 MDRUN_POTENTIAL = "Epot = -4.20000e+05"
+MDRUN_ENERGY_HEADER = (
+    "      Potential    Kinetic En.   Total Energy  Conserved En.    Temperature"
+)
+MDRUN_ENERGY_VALUES = (
+    "   -6.31538e+05    9.35119e+04   -5.38026e+05   -5.37901e+05    2.99834e+02"
+)
+MDRUN_PRESSURE_HEADER = " Pres. DC (bar) Pressure (bar)   Constr. rmsd"
+MDRUN_PRESSURE_VALUES = "   -1.25501e+02    1.16602e+02    6.48970e-06"
 UNRELATED_LINE = "Writing checkpoint, step 5000 at Wed Aug 26 12:34:56 2026"
 
 
@@ -107,6 +115,56 @@ class GromacsLogParserTests(unittest.TestCase):
         self.assertIsNone(progress.temperature_k)
         self.assertIsNone(progress.pressure_bar)
         self.assertIsNone(progress.potential_kj_mol)
+
+    def test_parser_reads_standard_multiline_gromacs_energy_tables(self):
+        from core.gromacs_log_parser import GromacsLogParser
+
+        parser = GromacsLogParser()
+
+        self.assertIsNone(parser.feed_line("Energies (kJ/mol)"))
+        self.assertIsNone(parser.feed_line(MDRUN_ENERGY_HEADER))
+        energy = parser.feed_line(MDRUN_ENERGY_VALUES)
+        self.assertIsNone(parser.feed_line(MDRUN_PRESSURE_HEADER))
+        pressure = parser.feed_line(MDRUN_PRESSURE_VALUES)
+
+        self.assertIsNotNone(energy)
+        self.assertEqual(energy.potential_kj_mol, -631538.0)
+        self.assertEqual(energy.temperature_k, 299.834)
+        self.assertIsNone(energy.pressure_bar)
+        self.assertIsNone(energy.step)
+
+        self.assertIsNotNone(pressure)
+        self.assertEqual(pressure.pressure_bar, 116.602)
+        self.assertIsNone(pressure.potential_kj_mol)
+        self.assertIsNone(pressure.temperature_k)
+
+    def test_parser_tolerates_tabular_label_variants_and_empty_cells(self):
+        from core.gromacs_log_parser import GromacsLogParser
+
+        parser = GromacsLogParser()
+
+        self.assertIsNone(
+            parser.feed_line("Potential Energy\tTemperature (K)\tPressure")
+        )
+        update = parser.feed_line("-4.2e+05\t\t1.01325")
+
+        self.assertIsNotNone(update)
+        self.assertEqual(update.potential_kj_mol, -420000.0)
+        self.assertEqual(update.pressure_bar, 1.01325)
+        self.assertIsNone(update.temperature_k)
+        self.assertIsNone(update.step)
+
+    def test_parser_rejects_ambiguous_whitespace_rows_with_missing_cells(self):
+        from core.gromacs_log_parser import GromacsLogParser
+
+        parser = GromacsLogParser()
+
+        self.assertIsNone(
+            parser.feed_line("Potential Energy  Temperature (K)  Pressure")
+        )
+        update = parser.feed_line("-4.2e+05    1.01325")
+
+        self.assertIsNone(update)
 
 
 if __name__ == "__main__":
