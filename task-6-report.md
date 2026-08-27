@@ -7,10 +7,11 @@ Implemented ACPYPE artifact discovery and normalization in `utils/topology_build
 - Added immutable `LigandTopologyArtifacts` contract.
 - Added content/pattern-based ACPYPE output discovery and canonical copies under `project/ligand/`.
 - Position restraints are copied only when a valid restraint section is present.
+  They must also be explicitly included by the selected ligand ITP; orphan restraint files are ignored and missing referenced files fail normalization.
 - Preserved `LigandParamWorker.done(bool, str)` and added `artifacts_ready(object)` for structured consumers.
 - Added `core.complex_builder` integration boundary and focused tests.
 
 Validation:
 
-- `python -m unittest tests.test_topology_builder tests.test_complex_builder -v` — passed (12 tests).
+- `python -m unittest tests.test_topology_builder tests.test_complex_builder -v` — passed (14 tests).
 - Full test discovery has 2 pre-existing failures in `tests/test_md_run_tab.py` concerning `start_mock_run`; no Task 6 files are involved.

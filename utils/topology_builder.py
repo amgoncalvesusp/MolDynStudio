@@ -129,6 +129,15 @@ def _is_posre(path: Path) -> bool:
     return bool(re.search(r"(?im)^\s*\[\s*position_restraints\s*\]", text))
 
 
+def _restraint_include_names(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return [
+        Path(match.group(1)).name
+        for match in re.finditer(r'(?im)^\s*#include\s+["<]([^">]+)[">]', text)
+        if "posre" in Path(match.group(1)).name.lower()
+    ]
+
+
 def _is_gro(path: Path) -> bool:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -177,9 +186,22 @@ def normalize_acpype_outputs(acpype_dir: str | Path, project_dir: str | Path) ->
         gro = gros[0]
     else:
         raise AcpypeOutputError("Could not identify one unambiguous ACPYPE GRO structure")
-    posres = [p for p in source.rglob("*.itp") if not in_destination(p) and _is_posre(p)]
+    posre_candidates = {
+        p.name.lower(): p
+        for p in source.rglob("*.itp")
+        if not in_destination(p) and _is_posre(p)
+    }
+    includes = _restraint_include_names(itp)
+    posres: list[Path] = []
+    for include_name in includes:
+        restraint = posre_candidates.get(include_name.lower())
+        if restraint is None:
+            raise AcpypeOutputError(
+                f"Referenced position-restraint ITP is missing: {include_name}"
+            )
+        posres.append(restraint)
     if len(posres) > 1:
-        raise AcpypeOutputError("Multiple position-restraint ITP files found")
+        raise AcpypeOutputError("Multiple position-restraint ITP files referenced")
     destination.mkdir(parents=True, exist_ok=True)
     out_gro = destination / "ligand.gro"
     out_itp = destination / "ligand.itp"

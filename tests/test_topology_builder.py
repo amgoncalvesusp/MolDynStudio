@@ -72,7 +72,9 @@ class TopologyBuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, project = Path(tmp) / "random.acpype", Path(tmp) / "project"
             root.mkdir()
-            (root / "foo_GMX.itp").write_text("[ moleculetype ]\nFOO 3\n", encoding="utf-8")
+            (root / "foo_GMX.itp").write_text(
+                '[ moleculetype ]\nFOO 3\n#include "foo_GMX_posre.itp"\n', encoding="utf-8"
+            )
             (root / "foo_GMX.gro").write_text("FOO\n1\n    1FOO C1 1 0 0 0\n1.0 1.0 1.0\n", encoding="utf-8")
             (root / "foo_GMX_posre.itp").write_text("[ position_restraints ]\n1 1 1000 1000 1000\n", encoding="utf-8")
             artifacts = normalize_acpype_outputs(root, project)
@@ -89,6 +91,28 @@ class TopologyBuilderTests(unittest.TestCase):
             (root / "x.gro").write_text("X\n1\natom\n1 1 1\n", encoding="utf-8")
             result = normalize_acpype_outputs(root, project)
             self.assertIsNone(result.ligand_posre_itp)
+
+    def test_orphan_posre_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, project = Path(tmp) / "x", Path(tmp) / "p"
+            root.mkdir()
+            (root / "x.itp").write_text("[ moleculetype ]\nX 3\n", encoding="utf-8")
+            (root / "x.gro").write_text("X\n1\natom\n1 1 1\n", encoding="utf-8")
+            (root / "x_posre.itp").write_text("[ position_restraints ]\n1 1 1 1 1\n", encoding="utf-8")
+            result = normalize_acpype_outputs(root, project)
+            self.assertIsNone(result.ligand_posre_itp)
+            self.assertFalse((project / "ligand" / "ligand_posre.itp").exists())
+
+    def test_missing_referenced_posre_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, project = Path(tmp) / "x", Path(tmp) / "p"
+            root.mkdir()
+            (root / "x.itp").write_text(
+                '[ moleculetype ]\nX 3\n#include "x_posre.itp"\n', encoding="utf-8"
+            )
+            (root / "x.gro").write_text("X\n1\natom\n1 1 1\n", encoding="utf-8")
+            with self.assertRaisesRegex(AcpypeOutputError, "missing"):
+                normalize_acpype_outputs(root, project)
     def test_rejects_boron_in_sdf_before_running_acpype(self):
         sdf = """C6S
   MolDynStudio
