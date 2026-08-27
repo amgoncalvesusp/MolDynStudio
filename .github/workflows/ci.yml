@@ -77,3 +77,39 @@ jobs:
           name: windows-installer
           path: dist/MolDynStudio-windows-x86_64.zip
           if-no-files-found: error
+
+  real-gromacs-smoke:
+    name: Linux / real GROMACS 2026.3 smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      MOLDYNSTUDIO_REAL_GROMACS_SMOKE: "1"
+      MOLDYNSTUDIO_GROMACS_EXECUTABLE: gmx
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Create isolated pinned GROMACS environment
+        uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
+        with:
+          activate-environment: moldynstudio-gromacs-smoke
+          miniforge-version: "26.3.2-2"
+          python-version: "3.11"
+          channels: conda-forge
+          channel-priority: strict
+          conda-remove-defaults: true
+
+      - name: Install pinned GROMACS build
+        run: conda install --yes "gromacs=2026.3=nompi_h26635d9_100"
+
+      - name: Verify GROMACS version
+        run: |
+          conda list --full-name gromacs
+          gmx --version | tee gromacs-version.txt
+          grep -Eq 'GROMACS version:.*2026\.3' gromacs-version.txt
+
+      - name: Run real grompp and mdrun smoke test
+        run: python -m unittest tests.test_real_gromacs_smoke -v

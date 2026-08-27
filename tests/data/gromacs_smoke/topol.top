@@ -1,0 +1,24 @@
+; Self-contained synthetic topology for the real-GROMACS CI smoke test.
+
+[ defaults ]
+; nbfunc  comb-rule  gen-pairs  fudgeLJ  fudgeQQ
+1         2          no         1.0      1.0
+
+[ atomtypes ]
+; name  at.num  mass    charge  ptype  sigma   epsilon
+Ar      18      39.948  0.0     A      0.3405  0.996
+
+[ moleculetype ]
+; name  nrexcl
+ARGON   1
+
+[ atoms ]
+; nr  type  resnr  residue  atom  cgnr  charge  mass
+1     Ar    1      AR       AR    1     0.0     39.948
+
+[ system ]
+Synthetic one-atom argon smoke system
+
+[ molecules ]
+; molecule  count
+ARGON       1
