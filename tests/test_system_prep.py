@@ -45,6 +45,50 @@ class SystemPrepTests(unittest.TestCase):
         self.assertEqual(genion[genion.index("-pname") + 1], "SOD")
         self.assertEqual(genion[genion.index("-nname") + 1], "CLA")
 
+    def test_ion_grompp_does_not_suppress_warnings(self):
+        worker = SystemPrepWorker(
+            SystemPrepParams(pdb_path="protein.pdb", work_dir="project")
+        )
+
+        grompp = next(args for description, args in worker._steps() if args[0] == "grompp")
+
+        self.assertNotIn("-maxwarn", grompp)
+        self.assertNotIn("5", grompp)
+
+    def test_grompp_failure_includes_recent_output(self):
+        worker = SystemPrepWorker(
+            SystemPrepParams(pdb_path="protein.pdb", work_dir="project")
+        )
+        result: list[tuple[bool, str]] = []
+        worker.done.connect(lambda ok, message: result.append((ok, message)))
+        process = mock.Mock()
+        process.stdout = iter(
+            [
+                "irrelevant startup output\n",
+                "WARNING 1 [file ions.mdp, line 4]: suspicious setting\n",
+                "Fatal error: cannot continue\n",
+            ]
+        )
+        process.wait.return_value = 1
+
+        with (
+            mock.patch("core.system_prep.ensure_noncovalent_complex"),
+            mock.patch.object(worker, "_ensure_force_field"),
+            mock.patch.object(worker, "_ensure_ions_mdp"),
+            mock.patch.object(
+                worker,
+                "_steps",
+                return_value=[("Preparing ion addition (grompp)...", ["grompp"])],
+            ),
+            mock.patch("core.system_prep.wsl_bridge.win_to_wsl", return_value="/tmp/protein.pdb"),
+            mock.patch("core.system_prep.wsl_bridge.gmx_popen", return_value=process),
+        ):
+            worker.run()
+
+        self.assertFalse(result[-1][0])
+        self.assertIn("WARNING 1", result[-1][1])
+        self.assertIn("Fatal error", result[-1][1])
+
     def test_current_charmm_force_field_is_staged_from_local_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             worker = SystemPrepWorker(

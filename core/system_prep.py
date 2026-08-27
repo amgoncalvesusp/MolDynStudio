@@ -169,7 +169,6 @@ class SystemPrepWorker(QThread):
                     "-c", "solvated.gro",
                     "-p", "topol.top",
                     "-o", "ions.tpr",
-                    "-maxwarn", "5",
                 ],
             ),
             (
@@ -228,6 +227,7 @@ class SystemPrepWorker(QThread):
         steps = self._steps()
         for index, (description, args) in enumerate(steps, start=1):
             self.log.emit(description)
+            recent_output: list[str] = []
             try:
                 if args[0] == "genion":
                     # genion needs interactive stdin: which solvent group to
@@ -245,14 +245,26 @@ class SystemPrepWorker(QThread):
                     return
                 try:
                     for line in proc.stdout:
-                        self.log.emit(line.rstrip())
+                        clean_line = line.rstrip()
+                        self.log.emit(clean_line)
+                        if clean_line.strip():
+                            recent_output.append(clean_line)
+                            del recent_output[:-8]
                 finally:
                     rc = proc.wait()
+                stderr = getattr(proc, "stderr", None)
+                if isinstance(stderr, str):
+                    recent_output.extend(line for line in stderr.splitlines() if line.strip())
+                    del recent_output[:-8]
             except (OSError, FileNotFoundError) as exc:
                 self.done.emit(False, f"Failed to launch step '{description}': {exc}")
                 return
             if rc != 0:
-                self.done.emit(False, f"Step failed (exit {rc}): {description}")
+                detail = "\n".join(recent_output)
+                message = f"Step failed (exit {rc}): {description}"
+                if detail:
+                    message += f"\nRecent output:\n{detail}"
+                self.done.emit(False, message)
                 return
             self.progress.emit(int(index / len(steps) * 100))
 
