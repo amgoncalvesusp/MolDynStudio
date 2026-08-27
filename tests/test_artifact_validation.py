@@ -10,6 +10,7 @@ from core.artifact_validation import (
     ValidationResult,
     validate_checkpoint,
     validate_gro,
+    validate_mdp,
     validate_stage_outputs,
     validate_topology,
     validate_tpr,
@@ -93,6 +94,31 @@ class ArtifactValidationTests(unittest.TestCase):
                 result = validate_topology(self.write(directory, f"invalid{index}.top", topology))
                 with self.subTest(molecule=molecule):
                     self.assertFalse(result.ok)
+
+    def test_validate_mdp_requires_positive_nsteps_and_dynamics_timestep(self):
+        with tempfile.TemporaryDirectory() as directory:
+            valid = self.write(directory, "md.mdp", "integrator = md\nnsteps = 500\ndt = 0.002\n")
+            self.assertTrue(validate_mdp(valid, require_dt=True).ok)
+
+            for index, content in enumerate((
+                "integrator = md\ndt = 0.002\n",
+                "integrator = md\nnsteps = 0\ndt = 0.002\n",
+                "integrator = md\nnsteps = 500\ndt = -0.002\n",
+                "integrator = md\nnsteps = 500\n",
+            )):
+                with self.subTest(index=index):
+                    result = validate_mdp(
+                        self.write(directory, f"bad-{index}.mdp", content),
+                        require_dt=True,
+                    )
+                    self.assertFalse(result.ok)
+
+    def test_validate_mdp_allows_minimization_without_dt_but_not_bad_numbers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            valid = self.write(directory, "em.mdp", "integrator = steep\nnsteps = 50000\n")
+            invalid = self.write(directory, "bad-em.mdp", "integrator = steep\nnsteps = nope\n")
+            self.assertTrue(validate_mdp(valid, require_dt=False).ok)
+            self.assertFalse(validate_mdp(invalid, require_dt=False).ok)
 
     def test_external_checks_preserve_diagnostic_output(self):
         with tempfile.TemporaryDirectory() as directory:

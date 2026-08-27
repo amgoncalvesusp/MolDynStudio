@@ -61,6 +61,19 @@ def _validators() -> ArtifactValidators:
 
 
 def _manifest(root: Path) -> Path:
+    (root / "system.gro").write_text(_valid_gro(), encoding="utf-8")
+    (root / "topol.top").write_text(
+        "[ system ]\nTest system\n[ molecules ]\nProtein 1\n",
+        encoding="utf-8",
+    )
+    (root / "em.mdp").write_text(
+        "integrator = steep\nnsteps = 50000\n", encoding="utf-8",
+    )
+    for filename in ("nvt.mdp", "npt.mdp", "md.mdp"):
+        (root / filename).write_text(
+            "integrator = md\nnsteps = 50000\ndt = 0.002\n",
+            encoding="utf-8",
+        )
     manifest = new_manifest(
         root,
         "protein",
@@ -148,6 +161,49 @@ class BlockingProductionRunner(FakeCommandRunner):
 
 
 class MDPipelineServiceTests(unittest.TestCase):
+    def test_preflight_failure_blocks_external_commands_and_fails_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            (root / "em.mdp").unlink()
+            runner = FakeCommandRunner(root)
+            service = MDPipelineService(
+                path,
+                build_pipeline(root, (StageName.MINIMIZATION,)),
+                _capabilities(),
+                command_runner=runner,
+                validators=_validators(),
+            )
+
+            self.assertFalse(service.run())
+
+            self.assertEqual(runner.commands, [])
+            stage = load_manifest(path).stages[StageName.MINIMIZATION.value]
+            self.assertEqual(stage.status, StageStatus.FAILED.value)
+            self.assertIn("preflight", stage.message.lower())
+            self.assertIn("em.mdp", stage.message)
+
+    def test_preflight_warning_is_logged_and_does_not_block_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            runner = FakeCommandRunner(root)
+            logs = []
+            service = MDPipelineService(
+                path,
+                build_pipeline(root, (StageName.MINIMIZATION,)),
+                _capabilities(),
+                command_runner=runner,
+                validators=_validators(),
+                on_log=logs.append,
+                free_space_warning_bytes=10**30,
+            )
+
+            self.assertTrue(service.run())
+
+            self.assertTrue(runner.commands)
+            self.assertTrue(any("preflight warning" in line.lower() for line in logs))
+
     def test_happy_path_emits_stage_sequence_and_completes_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

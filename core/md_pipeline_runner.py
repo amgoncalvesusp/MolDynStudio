@@ -54,6 +54,8 @@ from core.artifact_validation import (
     ValidationResult,
     validate_checkpoint,
     validate_gro,
+    validate_mdp,
+    validate_topology,
     validate_tpr,
 )
 from core.gromacs_capabilities import (
@@ -61,7 +63,12 @@ from core.gromacs_capabilities import (
     build_mdrun_resource_args,
 )
 from core.gromacs_runner import CommandSpec, GROMACSRunner, GromacsCommandBuilder
-from core.md_pipeline import PipelineCommand, PipelineStage
+from core.md_pipeline import (
+    DEFAULT_FREE_SPACE_WARNING_BYTES,
+    PipelineCommand,
+    PipelineStage,
+    preflight_stage,
+)
 from core.run_manifest import (
     CommandRecord,
     RunManifest,
@@ -78,6 +85,8 @@ StageCallback = Callable[[StageName, StageStatus, str], None]
 LogCallback = Callable[[str], None]
 FinishedCallback = Callable[[bool, str], None]
 Validator = Callable[[str | Path], ValidationResult]
+TopologyValidator = Callable[[str | Path, str | None], ValidationResult]
+MdpValidator = Callable[..., ValidationResult]
 
 
 class MDPipelineError(RuntimeError):
@@ -107,6 +116,8 @@ class ArtifactValidators:
     validate_gro: Validator = validate_gro
     validate_tpr: Validator = validate_tpr
     validate_checkpoint: Validator = validate_checkpoint
+    validate_topology: TopologyValidator = validate_topology
+    validate_mdp: MdpValidator = validate_mdp
     validate_file: Validator = lambda path: ValidationResult(
         Path(path).is_file(),
         f"File exists: {path}" if Path(path).is_file() else f"File is missing: {path}",
@@ -217,6 +228,7 @@ class MDPipelineService:
         *,
         command_runner: CommandRunnerService | None = None,
         validators: ArtifactValidators | None = None,
+        free_space_warning_bytes: int = DEFAULT_FREE_SPACE_WARNING_BYTES,
         on_stage_status: StageCallback | None = None,
         on_log: LogCallback | None = None,
         on_finished: FinishedCallback | None = None,
@@ -226,6 +238,7 @@ class MDPipelineService:
         self.capabilities = capabilities
         self.command_runner = command_runner or GromacsCommandRunnerService()
         self.validators = validators or ArtifactValidators()
+        self.free_space_warning_bytes = free_space_warning_bytes
         self.on_stage_status = on_stage_status or (lambda _name, _status, _message: None)
         self.on_log = on_log or (lambda _line: None)
         self.on_finished = on_finished or (lambda _success, _message: None)
@@ -287,7 +300,7 @@ class MDPipelineService:
             production.commands[0].cwd if production.commands else str(root),
         )
         resumed_stage = PipelineStage(StageName.PRODUCTION, (resume_command,))
-        if not self._run_stage(resumed_stage):
+        if not self._run_stage(resumed_stage, run_preflight=False):
             message = (
                 "Production resume stopped."
                 if self._stop_requested.is_set()
@@ -301,8 +314,33 @@ class MDPipelineService:
         assert self._manifest is not None
         return Path(self._manifest.project_dir)
 
-    def _run_stage(self, stage: PipelineStage) -> bool:
+    def _run_stage(self, stage: PipelineStage, *, run_preflight: bool = True) -> bool:
         self._active_stage = stage.name
+        if run_preflight:
+            assert self._manifest is not None
+            try:
+                validation = preflight_stage(
+                    stage,
+                    self._manifest,
+                    self._manifest.conda_environment,
+                    self._manifest.gromacs_binary,
+                    capabilities=self.capabilities,
+                    free_space_warning_bytes=self.free_space_warning_bytes,
+                    gro_validator=self.validators.validate_gro,
+                    topology_validator=self.validators.validate_topology,
+                    mdp_validator=self.validators.validate_mdp,
+                )
+            except Exception as exc:
+                self._fail_stage(
+                    stage.name,
+                    f"Preflight validation failed unexpectedly: {exc}",
+                )
+                return False
+            for warning in validation.warnings:
+                self.on_log(f"Preflight warning ({stage.name.value}): {warning}")
+            if not validation.ok:
+                self._fail_stage(stage.name, validation.message)
+                return False
         self._transition(
             stage.name,
             StageStatus.RUNNING,
@@ -589,6 +627,7 @@ class MDPipelineRunner(QThread):
         service: MDPipelineService | None = None,
         command_runner: CommandRunnerService | None = None,
         validators: ArtifactValidators | None = None,
+        free_space_warning_bytes: int = DEFAULT_FREE_SPACE_WARNING_BYTES,
         resume: bool = False,
         parent=None,
     ) -> None:
@@ -604,6 +643,7 @@ class MDPipelineRunner(QThread):
                 capabilities,
                 command_runner=command_runner,
                 validators=validators,
+                free_space_warning_bytes=free_space_warning_bytes,
             )
         self.service = service
         self.resume = resume

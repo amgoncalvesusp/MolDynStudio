@@ -8,6 +8,7 @@ parsers and makes the checks straightforward to test.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -20,6 +21,7 @@ class ValidationResult:
     ok: bool
     message: str
     details: Mapping[str, "ValidationResult"] = field(default_factory=dict)
+    warnings: tuple[str, ...] = ()
 
 
 def _read_text(path: str | Path, label: str) -> tuple[Path | None, str | None, ValidationResult | None]:
@@ -118,6 +120,50 @@ def validate_topology(path: str | Path, ligand_name: str | None = None) -> Valid
     if ligand_name and ligand_name not in {name for name, _count in molecule_lines}:
         return ValidationResult(False, f"Topology does not contain ligand molecule '{ligand_name}'.")
     return ValidationResult(True, "Topology is valid.")
+
+
+def validate_mdp(path: str | Path, *, require_dt: bool = True) -> ValidationResult:
+    """Validate the time-defining fields of a stage MDP file.
+
+    Molecular-dynamics stages require both a positive integration timestep and
+    a positive step count. Energy minimization still requires ``nsteps``, but
+    its steepest-descent integrator does not consume ``dt``.
+    """
+
+    _candidate, text, error = _read_text(path, "MDP parameters")
+    if error:
+        return error
+    assert text is not None
+    parameters: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.split(";", 1)[0].strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        parameters[name.strip().casefold()] = value.strip()
+
+    raw_nsteps = parameters.get("nsteps")
+    if raw_nsteps is None:
+        return ValidationResult(False, "MDP parameters are missing nsteps.")
+    try:
+        nsteps = int(raw_nsteps)
+    except ValueError:
+        return ValidationResult(False, "MDP nsteps must be an integer.")
+    if nsteps <= 0:
+        return ValidationResult(False, "MDP nsteps must be positive.")
+
+    raw_dt = parameters.get("dt")
+    if raw_dt is None:
+        if require_dt:
+            return ValidationResult(False, "MDP parameters are missing dt.")
+        return ValidationResult(True, "MDP parameters are valid.")
+    try:
+        dt = float(raw_dt)
+    except ValueError:
+        return ValidationResult(False, "MDP dt must be numeric.")
+    if not math.isfinite(dt) or dt <= 0:
+        return ValidationResult(False, "MDP dt must be positive and finite.")
+    return ValidationResult(True, "MDP parameters are valid.")
 
 
 def _validate_binary(path: str | Path, kind: str, args: list[str], bridge: Any) -> ValidationResult:
