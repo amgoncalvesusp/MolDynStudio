@@ -115,6 +115,7 @@ class FakeCommandRunner:
             self._write(f"{stem}.cpt", "checkpoint")
             self._write(f"{stem}.log", "log")
             self._write(f"{stem}.edr", "energy")
+            self._write(f"{stem}.xtc", "trajectory")
         if on_output is not None:
             on_output(f"ran {command.stage} {subcommand}")
         return CommandOutcome(0)
@@ -260,6 +261,39 @@ class MDPipelineServiceTests(unittest.TestCase):
                 StageStatus.COMPLETED.value,
             )
 
+    def test_every_required_mdrun_artifact_gates_stage_completion(self):
+        required_outputs = {
+            StageName.MINIMIZATION: ("em.gro", "em.edr", "em.log"),
+            StageName.NVT: ("nvt.gro", "nvt.edr", "nvt.log", "nvt.cpt"),
+            StageName.NPT: ("npt.gro", "npt.edr", "npt.log", "npt.cpt"),
+            StageName.PRODUCTION: (
+                "md.gro",
+                "md.edr",
+                "md.log",
+                "md.cpt",
+                "md.xtc",
+            ),
+        }
+        for expected_stage, filenames in required_outputs.items():
+            for missing in filenames:
+                with self.subTest(stage=expected_stage.value, missing=missing):
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        path = _manifest(root)
+                        service = MDPipelineService(
+                            path,
+                            build_pipeline(root),
+                            _capabilities(),
+                            command_runner=FakeCommandRunner(root, omit=missing),
+                            validators=_validators(),
+                        )
+
+                        self.assertFalse(service.run())
+
+                        stage = load_manifest(path).stages[expected_stage.value]
+                        self.assertEqual(stage.status, StageStatus.FAILED.value)
+                        self.assertIn(missing, stage.message)
+
     def test_executor_exception_is_persisted_as_failure(self):
         class RaisingRunner(FakeCommandRunner):
             def execute(self, command, on_output=None) -> CommandOutcome:
@@ -341,25 +375,29 @@ class MDPipelineServiceTests(unittest.TestCase):
                 ),
             )
 
-    def test_resume_rejects_invalid_checkpoint_before_launch(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            path = _manifest(root)
-            for filename in ("md.tpr", "md.log", "md.edr"):
-                (root / filename).write_text(filename, encoding="utf-8")
-            runner = FakeCommandRunner(root)
-            service = MDPipelineService(
-                path,
-                (build_production_stage(root),),
-                _capabilities(),
-                command_runner=runner,
-                validators=_validators(),
-            )
+    def test_resume_rejects_any_invalid_checkpoint_input_before_launch(self):
+        required = ("md.tpr", "md.cpt", "md.log", "md.edr")
+        for missing in required:
+            with self.subTest(missing=missing):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    path = _manifest(root)
+                    for filename in required:
+                        if filename != missing:
+                            (root / filename).write_text(filename, encoding="utf-8")
+                    runner = FakeCommandRunner(root)
+                    service = MDPipelineService(
+                        path,
+                        (build_production_stage(root),),
+                        _capabilities(),
+                        command_runner=runner,
+                        validators=_validators(),
+                    )
 
-            with self.assertRaises(PipelineResumeError):
-                service.resume_production()
+                    with self.assertRaisesRegex(PipelineResumeError, missing):
+                        service.resume_production()
 
-            self.assertEqual(runner.commands, [])
+                    self.assertEqual(runner.commands, [])
 
 
 class MDPipelineThreadTests(unittest.TestCase):

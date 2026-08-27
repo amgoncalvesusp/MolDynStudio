@@ -178,6 +178,33 @@ _STAGE_STEMS = {
     StageName.PRODUCTION: "md",
 }
 
+_REQUIRED_MDRUN_OUTPUTS = {
+    StageName.MINIMIZATION: (
+        ("em.gro", "gro"),
+        ("em.edr", "file"),
+        ("em.log", "file"),
+    ),
+    StageName.NVT: (
+        ("nvt.gro", "gro"),
+        ("nvt.edr", "file"),
+        ("nvt.log", "file"),
+        ("nvt.cpt", "checkpoint"),
+    ),
+    StageName.NPT: (
+        ("npt.gro", "gro"),
+        ("npt.edr", "file"),
+        ("npt.log", "file"),
+        ("npt.cpt", "checkpoint"),
+    ),
+    StageName.PRODUCTION: (
+        ("md.gro", "gro"),
+        ("md.edr", "file"),
+        ("md.log", "file"),
+        ("md.cpt", "checkpoint"),
+        ("md.xtc", "file"),
+    ),
+}
+
 
 class MDPipelineService:
     """Execute stage specifications and persist every meaningful transition."""
@@ -371,19 +398,13 @@ class MDPipelineService:
         if subcommand != "mdrun":
             return None
 
-        checks: list[tuple[str, Validator]] = [
-            (f"{stem}.gro", self.validators.validate_gro),
-        ]
-        if stage in (StageName.NVT, StageName.NPT, StageName.PRODUCTION):
-            checks.append((f"{stem}.cpt", self.validators.validate_checkpoint))
-        if stage == StageName.PRODUCTION:
-            checks.extend(
-                (
-                    ("md.log", self.validators.validate_file),
-                    ("md.edr", self.validators.validate_file),
-                )
-            )
-        for filename, validator in checks:
+        validators = {
+            "gro": self.validators.validate_gro,
+            "checkpoint": self.validators.validate_checkpoint,
+            "file": self.validators.validate_file,
+        }
+        for filename, validator_name in _REQUIRED_MDRUN_OUTPUTS[stage]:
+            validator = validators[validator_name]
             result = self._validate(validator, self._project_dir / filename)
             if not result.ok:
                 return ValidationResult(
@@ -404,11 +425,10 @@ class MDPipelineService:
 
     def _stage_outputs(self, stage: StageName) -> dict[str, str]:
         stem = _STAGE_STEMS[stage]
-        filenames = [f"{stem}.tpr", f"{stem}.gro"]
-        if stage in (StageName.NVT, StageName.NPT, StageName.PRODUCTION):
-            filenames.append(f"{stem}.cpt")
-        if stage == StageName.PRODUCTION:
-            filenames.extend(("md.log", "md.edr"))
+        filenames = [
+            f"{stem}.tpr",
+            *(filename for filename, _kind in _REQUIRED_MDRUN_OUTPUTS[stage]),
+        ]
         return {name: str((self._project_dir / name).resolve()) for name in filenames}
 
     def _start_command(self, stage: StageName, spec: CommandSpec) -> int:
