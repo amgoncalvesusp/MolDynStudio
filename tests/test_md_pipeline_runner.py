@@ -483,24 +483,35 @@ class MDPipelineServiceTests(unittest.TestCase):
                     gromacs_runner.shutil, "which", return_value="wsl.exe"
                 ),
                 mock.patch.object(
-                    gromacs_runner.wsl_bridge,
-                    "popen_raw_shell",
+                    gromacs_runner.wsl_bridge, "IS_WINDOWS", True
+                ),
+                mock.patch.object(
+                    gromacs_runner.wsl_bridge.subprocess,
+                    "Popen",
                     return_value=process,
-                ) as bridge_popen,
+                ) as process_launch,
                 mock.patch(
                     "core.gromacs_capabilities.os.cpu_count", return_value=8
                 ),
             ):
                 self.assertTrue(service.resume_production())
 
-        bridge_popen.assert_called_once()
-        script = bridge_popen.call_args.args[0]
-        self.assertEqual(bridge_popen.call_args.kwargs["cwd"], windows_project)
+        process_launch.assert_called_once()
+        wrapped_command = process_launch.call_args.args[0]
+        self.assertEqual(
+            wrapped_command[:4], ["wsl.exe", "--", "bash", "-lc"]
+        )
+        script = wrapped_command[4]
+        self.assertIn(
+            "cd '/mnt/c/Users/Test User/MolDynStudio Project' &&",
+            script,
+        )
         self.assertIn(f"conda run --no-capture-output -n {configured_env}", script)
         self.assertIn(
             "gmx mdrun -deffnm md -cpi md.cpt -v",
             script,
         )
+        self.assertIn(r"moldynstudio_pgid=\$!", script)
         self.assertNotIn(windows_project, script)
 
     def test_resume_rejects_any_invalid_checkpoint_input_before_launch(self):

@@ -203,6 +203,20 @@ class WSLBridgeWrapTests(unittest.TestCase):
                     env_name="configured-md-env",
                 )
 
+    def test_windows_raw_shell_rejects_unc_cwd_before_process_launch(self):
+        with (
+            mock.patch.object(wsl_bridge, "IS_WINDOWS", True),
+            mock.patch.object(wsl_bridge.shutil, "which", return_value="wsl.exe"),
+            mock.patch.object(wsl_bridge.subprocess, "Popen") as process_launch,
+        ):
+            with self.assertRaisesRegex(ValueError, "UNC/network paths"):
+                wsl_bridge.popen_raw_shell(
+                    "setsid gmx mdrun -deffnm md -cpi md.cpt -v",
+                    cwd=r"\\server\share\MolDynStudio Project",
+                )
+
+        process_launch.assert_not_called()
+
     def test_wrap_raw_on_windows_does_not_prefix_conda_env(self):
         with (
             mock.patch.object(wsl_bridge, "IS_WINDOWS", True),
