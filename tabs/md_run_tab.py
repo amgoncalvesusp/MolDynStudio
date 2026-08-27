@@ -216,6 +216,12 @@ class MDRunTab(MolDynBasePage):
         self._set_controls_active(False)
         self._disable_resume_options()
 
+    @property
+    def is_active(self) -> bool:
+        """Whether this tab currently owns a running MD pipeline."""
+
+        return self._active
+
     def load_project(self, project_dir: str) -> None:
         """Use the exact project directory selected by MD Setup."""
 

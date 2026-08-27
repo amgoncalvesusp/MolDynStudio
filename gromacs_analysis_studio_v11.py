@@ -50,7 +50,11 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from core.project_manager import ProjectFormatError, ProjectManager
+from core.project_manager import (
+    ProjectFormatError,
+    ProjectManager,
+    is_windows_absolute_path,
+)
 from core.settings import SettingsStore
 from settings_dialog import SettingsDialog
 from tabs.analysis_tab import AnalysisTab
@@ -1300,6 +1304,12 @@ class MainWindow(QMainWindow):
         }
 
     def _on_project_prepared(self, project_dir: str, manifest_path: str) -> None:
+        run_page = self.pages.get("MD Run")
+        if isinstance(run_page, MDRunTab) and run_page.is_active:
+            self.append_log(
+                "Prepared project handoff ignored while the current MD run is active."
+            )
+            return
         project = Path(project_dir).expanduser().resolve()
         manifest = Path(manifest_path).expanduser()
         if not manifest.is_absolute():
@@ -1307,7 +1317,6 @@ class MainWindow(QMainWindow):
         self.active_project_dir = project
         self.active_manifest_path = manifest.resolve()
         self._project_context_was_cleared = False
-        run_page = self.pages.get("MD Run")
         if isinstance(run_page, MDRunTab):
             run_page.load_project(str(project))
         self.append_log(f"Prepared MD project loaded: {project}")
@@ -1332,6 +1341,15 @@ class MainWindow(QMainWindow):
         if not project_text:
             self._clear_project_context()
             return
+        if not sys.platform.startswith("win") and is_windows_absolute_path(
+            project_text
+        ):
+            raise ProjectFormatError(
+                "This project references a Windows absolute path that cannot be "
+                "opened on this platform. Move the .mds file into the prepared "
+                "project directory on Windows, save it again, and transfer both "
+                "together."
+            )
         project = Path(project_text).expanduser()
         if not project.is_absolute():
             base = session_path.parent if session_path is not None else Path.cwd()
@@ -1339,6 +1357,14 @@ class MainWindow(QMainWindow):
         project = project.resolve()
         manifest_text = str(context.get("manifest_path", "")).strip()
         manifest_reference = manifest_text or "moldynstudio_run.json"
+        if not sys.platform.startswith("win") and is_windows_absolute_path(
+            manifest_reference
+        ):
+            raise ProjectFormatError(
+                "This project manifest uses a Windows absolute path that cannot "
+                "be opened on this platform. Save the session with portable "
+                "relative paths before transferring it."
+            )
         manifest = Path(manifest_reference).expanduser()
         if not manifest.is_absolute():
             manifest = project / Path(manifest_reference.replace("\\", "/"))

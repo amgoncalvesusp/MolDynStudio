@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
@@ -15,6 +16,7 @@ from PyQt5.QtWidgets import QApplication, QLabel
 from core.artifact_validation import ValidationResult
 from core.gromacs_capabilities import GromacsCapabilities
 from core.md_pipeline_runner import ArtifactValidators
+from core.project_manager import ProjectFormatError
 from core.run_manifest import (
     StageName,
     StageStatus,
@@ -647,6 +649,63 @@ class MDRunTabTests(unittest.TestCase):
             run_tab = window.pages["MD Run"]
             self.assertEqual(run_tab._project_dir, root.resolve())
             self.assertIn("Prepared project", run_tab.project_context.text())
+
+    def test_preparation_handoff_is_ignored_while_md_run_is_active(self):
+        from gromacs_analysis_studio_v11 import MainWindow
+
+        with (
+            tempfile.TemporaryDirectory() as active_directory,
+            tempfile.TemporaryDirectory() as new_directory,
+        ):
+            active_project = Path(active_directory)
+            new_project = Path(new_directory)
+            active_manifest = _manifest(active_project)
+            new_manifest_file = _manifest(new_project)
+            window = MainWindow()
+            self.addCleanup(window.deleteLater)
+            setup_tab = window.pages["MD Setup"]
+            run_tab = window.pages["MD Run"]
+
+            setup_tab.project_prepared.emit(
+                str(active_project),
+                str(active_manifest),
+            )
+            run_tab._active = True
+            setup_tab.project_prepared.emit(
+                str(new_project),
+                str(new_manifest_file),
+            )
+
+            self.assertEqual(window.active_project_dir, active_project.resolve())
+            self.assertEqual(window.active_manifest_path, active_manifest.resolve())
+            self.assertEqual(run_tab._project_dir, active_project.resolve())
+            self.assertEqual(
+                window.session_data()["project_context"]["project_dir"],
+                str(active_project.resolve()),
+            )
+
+    def test_main_window_rejects_foreign_absolute_context_without_rehoming(self):
+        from gromacs_analysis_studio_v11 import MainWindow
+
+        window = MainWindow()
+        self.addCleanup(window.deleteLater)
+
+        with (
+            mock.patch("gromacs_analysis_studio_v11.sys.platform", "linux"),
+            self.assertRaisesRegex(ProjectFormatError, "Windows absolute path"),
+        ):
+            window.apply_session_data(
+                {
+                    "pages": {},
+                    "project_context": {
+                        "project_dir": "C:/simulations/protein",
+                        "manifest_path": "moldynstudio_run.json",
+                    },
+                }
+            )
+
+        self.assertIsNone(window.active_project_dir)
+        self.assertIsNone(window.active_manifest_path)
 
 
 if __name__ == "__main__":

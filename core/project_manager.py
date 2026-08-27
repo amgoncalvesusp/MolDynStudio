@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Mapping
 
 
@@ -15,6 +16,18 @@ class ProjectFormatError(ValueError):
 
 CURRENT_PROJECT_VERSION = "2.0"
 LEGACY_PROJECT_VERSION = "1.0"
+
+
+def is_windows_absolute_path(value: object) -> bool:
+    """Recognize drive-qualified and UNC paths on every host platform."""
+
+    if not isinstance(value, str) or not value.strip():
+        return False
+    return PureWindowsPath(value).is_absolute()
+
+
+def _foreign_windows_path(value: str) -> str:
+    return PureWindowsPath(value).as_posix()
 
 
 def _version_parts(value: object) -> tuple[int, ...] | None:
@@ -65,11 +78,33 @@ def _state_for_save(
     if not project_text:
         return saved
 
+    foreign_project = (
+        not sys.platform.startswith("win")
+        and is_windows_absolute_path(project_text)
+    )
+    if foreign_project:
+        project_value = _foreign_windows_path(project_text)
+        manifest_reference = manifest_text or "moldynstudio_run.json"
+        if is_windows_absolute_path(manifest_reference):
+            manifest_path = PureWindowsPath(manifest_reference)
+            try:
+                manifest_value = manifest_path.relative_to(
+                    PureWindowsPath(project_value)
+                ).as_posix()
+            except ValueError:
+                manifest_value = manifest_path.as_posix()
+        else:
+            manifest_value = PureWindowsPath(manifest_reference).as_posix()
+        saved["project_context"] = {
+            **dict(context),
+            "project_dir": project_value,
+            "manifest_path": manifest_value,
+        }
+        return saved
+
     project_dir = Path(project_text).expanduser().resolve()
-    manifest_file = (
-        Path(manifest_text).expanduser()
-        if manifest_text
-        else project_dir / "moldynstudio_run.json"
+    manifest_file = Path(manifest_text).expanduser() if manifest_text else (
+        project_dir / "moldynstudio_run.json"
     )
     if not manifest_file.is_absolute():
         manifest_file = project_dir / manifest_file
@@ -103,21 +138,42 @@ def _state_after_load(state: Mapping[str, Any], source: Path) -> dict[str, Any]:
     project_text = str(context.get("project_dir", "")).strip()
     if not project_text:
         return loaded
-    project_dir = Path(project_text).expanduser()
-    if not project_dir.is_absolute():
-        project_dir = source.parent / Path(project_text.replace("\\", "/"))
-    project_dir = project_dir.resolve()
+    foreign_project = (
+        not sys.platform.startswith("win")
+        and is_windows_absolute_path(project_text)
+    )
+    if foreign_project:
+        project_value = _foreign_windows_path(project_text)
+    else:
+        project_dir = Path(project_text).expanduser()
+        if not project_dir.is_absolute():
+            project_dir = source.parent / Path(project_text.replace("\\", "/"))
+        project_value = str(project_dir.resolve())
 
     manifest_text = str(context.get("manifest_path", "")).strip()
     manifest_reference = manifest_text or "moldynstudio_run.json"
-    manifest_file = Path(manifest_reference).expanduser()
-    if not manifest_file.is_absolute():
-        manifest_file = project_dir / Path(manifest_reference.replace("\\", "/"))
+    foreign_manifest = (
+        not sys.platform.startswith("win")
+        and is_windows_absolute_path(manifest_reference)
+    )
+    if foreign_manifest:
+        manifest_value = _foreign_windows_path(manifest_reference)
+    elif foreign_project:
+        manifest_value = (
+            PureWindowsPath(project_value) / PureWindowsPath(manifest_reference)
+        ).as_posix()
+    else:
+        manifest_file = Path(manifest_reference).expanduser()
+        if not manifest_file.is_absolute():
+            manifest_file = Path(project_value) / Path(
+                manifest_reference.replace("\\", "/")
+            )
+        manifest_value = str(manifest_file.resolve())
 
     loaded["project_context"] = {
         **dict(context),
-        "project_dir": str(project_dir),
-        "manifest_path": str(manifest_file.resolve()),
+        "project_dir": project_value,
+        "manifest_path": manifest_value,
     }
     return loaded
 

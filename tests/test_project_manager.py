@@ -5,10 +5,12 @@ import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest import mock
 
 from core.project_manager import (
     ProjectFormatError,
     ProjectManager,
+    is_windows_absolute_path,
     migrate_project_payload,
 )
 
@@ -159,6 +161,49 @@ class ProjectManagerTests(unittest.TestCase):
                 "manifest_path": str(
                     project_dir / "state" / "moldynstudio_run.json"
                 ),
+            },
+        )
+
+    def test_windows_absolute_paths_are_not_rehomed_on_posix(self):
+        self.assertTrue(is_windows_absolute_path("C:/simulations/protein"))
+        self.assertTrue(is_windows_absolute_path(r"\\server\share\protein"))
+        self.assertFalse(is_windows_absolute_path("portable/project"))
+        manager = ProjectManager()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "windows-absolute.mds"
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": manager.project_version,
+                        "state": {
+                            "project_context": {
+                                "project_dir": "C:\\simulations\\protein",
+                                "manifest_path": "moldynstudio_run.json",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch("core.project_manager.sys.platform", "linux"):
+                loaded = manager.load(path)
+                resaved_path = manager.save(Path(tmp) / "resaved.mds", loaded)
+
+            resaved = json.loads(resaved_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            loaded["project_context"],
+            {
+                "project_dir": "C:/simulations/protein",
+                "manifest_path": "C:/simulations/protein/moldynstudio_run.json",
+            },
+        )
+        self.assertEqual(
+            resaved["state"]["project_context"],
+            {
+                "project_dir": "C:/simulations/protein",
+                "manifest_path": "moldynstudio_run.json",
             },
         )
 
