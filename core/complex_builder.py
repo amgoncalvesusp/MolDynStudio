@@ -56,8 +56,9 @@ def patch_topology_for_ligand(
 ) -> Path:
     """Insert ligand include and molecule record into a system topology.
 
-    The operation is idempotent and writes a new file by default, preserving the
-    input topology when no output path is supplied.
+    The operation is idempotent and patches the input topology in place when no
+    output path is supplied. Supplying ``output_topology`` writes a separate
+    patched file.
     """
     source = Path(topology)
     destination = Path(output_topology) if output_topology is not None else source
@@ -67,7 +68,7 @@ def patch_topology_for_ligand(
     # GROMACS resolves this project-relative include from the topology folder.
     ligand_path = Path(ligand_itp)
     try:
-        include_path = ligand_path.resolve().relative_to(source.parent.resolve()).as_posix()
+        include_path = ligand_path.resolve().relative_to(destination.parent.resolve()).as_posix()
     except ValueError:
         include_path = ligand_path.name
     if ligand_path.parent.name.lower() != "ligand" and not include_path.lower().startswith("ligand/"):

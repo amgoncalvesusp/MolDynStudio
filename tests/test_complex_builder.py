@@ -76,6 +76,35 @@ class ComplexBuilderTests(unittest.TestCase):
             self.assertEqual(again.count('#include "ligand/ligand.itp"'), 1)
             self.assertEqual(again.count("MOL                1"), 1)
 
+    def test_patch_topology_uses_output_directory_for_relative_include(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            template = root / "template"
+            run = root / "run"
+            (run / "ligand").mkdir(parents=True)
+            source = template / "topol.top"
+            source.parent.mkdir()
+            source.write_text(
+                '#include "amber99sb.ff/forcefield.itp"\n\n'
+                '[ system ]\nComplex\n\n[ molecules ]\nProtein_chain_A 1\nSOL 1\n',
+                encoding="utf-8")
+            itp = run / "ligand" / "ligand.itp"
+            itp.write_text("[ moleculetype ]\nMOL 3\n", encoding="utf-8")
+            output = run / "topol.top"
+            patch_topology_for_ligand(source, itp, output)
+            self.assertIn('#include "ligand/ligand.itp"', output.read_text(encoding="utf-8"))
+
+    def test_patch_topology_defaults_to_in_place(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            top = root / "topol.top"
+            itp = root / "ligand.itp"
+            top.write_text("[ system ]\nComplex\n\n[ molecules ]\nProtein 1\n", encoding="utf-8")
+            itp.write_text("[ moleculetype ]\nMOL 3\n", encoding="utf-8")
+            result = patch_topology_for_ligand(top, itp)
+            self.assertEqual(result, top)
+            self.assertIn("MOL", top.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
