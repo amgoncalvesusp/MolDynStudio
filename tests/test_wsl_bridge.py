@@ -18,6 +18,22 @@ class WSLBridgePathTests(unittest.TestCase):
         with mock.patch.object(wsl_bridge, "IS_WINDOWS", True):
             self.assertEqual(wsl_bridge.win_to_wsl("D:\\"), "/mnt/d")
 
+    def test_win_to_wsl_preserves_spaces_in_windows_project_path(self):
+        with mock.patch.object(wsl_bridge, "IS_WINDOWS", True):
+            self.assertEqual(
+                wsl_bridge.win_to_wsl(
+                    r"C:\Users\Test User\MolDynStudio Project"
+                ),
+                "/mnt/c/Users/Test User/MolDynStudio Project",
+            )
+
+    def test_win_to_wsl_rejects_unc_network_path(self):
+        with mock.patch.object(wsl_bridge, "IS_WINDOWS", True):
+            with self.assertRaisesRegex(ValueError, "UNC/network paths"):
+                wsl_bridge.win_to_wsl(
+                    r"\\server\shared projects\MolDynStudio Project"
+                )
+
     def test_win_to_wsl_passthrough_on_unix(self):
         with mock.patch.object(wsl_bridge, "IS_WINDOWS", False):
             self.assertEqual(
@@ -134,6 +150,58 @@ class WSLBridgeWrapTests(unittest.TestCase):
             )
         self.assertIn("cd /mnt/c/work &&", cmd[4])
         self.assertIn("/mnt/c/work", cmd[4])
+
+    def test_windows_resume_tokens_use_quoted_wsl_cwd_and_configured_env(self):
+        windows_project = r"C:\Users\Test User\MolDynStudio Project"
+        resume_tokens = [
+            "gmx",
+            "mdrun",
+            "-deffnm",
+            "md",
+            "-cpi",
+            "md.cpt",
+            "-v",
+        ]
+        process = mock.Mock()
+        with (
+            mock.patch.object(wsl_bridge, "IS_WINDOWS", True),
+            mock.patch.object(wsl_bridge.shutil, "which", return_value="wsl.exe"),
+            mock.patch.object(
+                wsl_bridge.subprocess, "Popen", return_value=process
+            ) as popen,
+        ):
+            result = wsl_bridge.popen(
+                resume_tokens,
+                cwd=windows_project,
+                env_name="configured-md-env",
+            )
+
+        self.assertIs(result, process)
+        command = popen.call_args.args[0]
+        self.assertEqual(command[:4], ["wsl.exe", "--", "bash", "-lc"])
+        script = command[4]
+        self.assertIn(
+            "cd '/mnt/c/Users/Test User/MolDynStudio Project' &&",
+            script,
+        )
+        self.assertNotIn("cd /mnt/c/Users/Test User/MolDynStudio Project", script)
+        self.assertIn(
+            "conda run --no-capture-output -n configured-md-env "
+            "gmx mdrun -deffnm md -cpi md.cpt -v",
+            script,
+        )
+
+    def test_windows_command_wrap_rejects_unc_cwd_before_process_launch(self):
+        with (
+            mock.patch.object(wsl_bridge, "IS_WINDOWS", True),
+            mock.patch.object(wsl_bridge.shutil, "which", return_value="wsl.exe"),
+        ):
+            with self.assertRaisesRegex(ValueError, "UNC/network paths"):
+                wsl_bridge._wrap(
+                    ["gmx", "mdrun"],
+                    cwd=r"\\server\share\MolDynStudio Project",
+                    env_name="configured-md-env",
+                )
 
     def test_wrap_raw_on_windows_does_not_prefix_conda_env(self):
         with (

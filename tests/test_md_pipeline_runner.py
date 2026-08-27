@@ -5,8 +5,10 @@ import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
+from core import gromacs_runner
 from core.artifact_validation import ValidationResult
 from core.gromacs_capabilities import GPU_MODE_AUTO, GromacsCapabilities
 from core.md_pipeline import build_pipeline, build_production_stage
@@ -430,6 +432,76 @@ class MDPipelineServiceTests(unittest.TestCase):
                     "4",
                 ),
             )
+
+    def test_windows_resume_reaches_wsl_bridge_with_tokens_cwd_and_conda_env(self):
+        windows_project = r"C:\Users\Test User\MolDynStudio Project"
+        configured_env = "configured-md-env"
+        process = mock.Mock()
+        process.pid = 1001
+        process.poll.return_value = None
+        process.stdout = iter(
+            [f"{gromacs_runner.WSL_PGID_PREFIX}1001\n", "Finished mdrun\n"]
+        )
+        process.wait.return_value = 0
+        process.stdin = mock.Mock()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            manifest = load_manifest(path)
+            save_manifest(
+                replace(
+                    manifest,
+                    project_dir=windows_project,
+                    conda_environment=configured_env,
+                ),
+                path,
+            )
+
+            def always_valid(candidate):
+                return ValidationResult(
+                    True, f"mocked validation for {candidate}"
+                )
+
+            service = MDPipelineService(
+                path,
+                (build_production_stage(windows_project),),
+                _capabilities(),
+                validators=ArtifactValidators(
+                    validate_gro=always_valid,
+                    validate_tpr=always_valid,
+                    validate_checkpoint=always_valid,
+                    validate_file=always_valid,
+                ),
+            )
+
+            with (
+                mock.patch.object(
+                    gromacs_runner, "os", SimpleNamespace(name="nt")
+                ),
+                mock.patch.object(
+                    gromacs_runner.shutil, "which", return_value="wsl.exe"
+                ),
+                mock.patch.object(
+                    gromacs_runner.wsl_bridge,
+                    "popen_raw_shell",
+                    return_value=process,
+                ) as bridge_popen,
+                mock.patch(
+                    "core.gromacs_capabilities.os.cpu_count", return_value=8
+                ),
+            ):
+                self.assertTrue(service.resume_production())
+
+        bridge_popen.assert_called_once()
+        script = bridge_popen.call_args.args[0]
+        self.assertEqual(bridge_popen.call_args.kwargs["cwd"], windows_project)
+        self.assertIn(f"conda run --no-capture-output -n {configured_env}", script)
+        self.assertIn(
+            "gmx mdrun -deffnm md -cpi md.cpt -v",
+            script,
+        )
+        self.assertNotIn(windows_project, script)
 
     def test_resume_rejects_any_invalid_checkpoint_input_before_launch(self):
         required = ("md.tpr", "md.cpt", "md.log", "md.edr")
