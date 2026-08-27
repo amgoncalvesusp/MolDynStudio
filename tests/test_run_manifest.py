@@ -63,6 +63,14 @@ class RunManifestTests(unittest.TestCase):
                 path.write_text(json.dumps(data), encoding="utf-8")
                 with self.assertRaises(RunManifestError): load_manifest(path)
 
+    def test_missing_stage_fields_are_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "manifest.json"
+            for field in ("name", "status", "started_at", "finished_at", "message", "commands", "inputs", "outputs"):
+                data = asdict(make_manifest()); data["stages"]["preparation"].pop(field)
+                path.write_text(json.dumps(data), encoding="utf-8")
+                with self.assertRaises(RunManifestError): load_manifest(path)
+
     def test_atomic_failure_preserves_existing_destination(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "manifest.json"

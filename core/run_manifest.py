@@ -144,12 +144,21 @@ def load_manifest(path: str | Path) -> RunManifest:
         raise RunManifestError(f"Unable to load run manifest: {exc}") from exc
 
 def _stage_record(key: str, value: Any) -> StageRecord:
-    if not isinstance(value, dict) or value.get("name") != key:
+    required = {"name", "status", "started_at", "finished_at", "message", "commands", "inputs", "outputs"}
+    if not isinstance(value, dict) or required - value.keys() or value.get("name") != key:
         raise RunManifestError(f"invalid stage record for {key!r}")
     try:
         StageName(key)
-        StageStatus(value.get("status", StageStatus.NOT_READY.value))
-        commands = value.get("commands", [])
+        if not isinstance(value["name"], str) or not isinstance(value["status"], str):
+            raise ValueError("stage name and status must be strings")
+        StageStatus(value["status"])
+        if value["started_at"] is not None and not isinstance(value["started_at"], str):
+            raise ValueError("stage started_at must be a string or null")
+        if value["finished_at"] is not None and not isinstance(value["finished_at"], str):
+            raise ValueError("stage finished_at must be a string or null")
+        if not isinstance(value["message"], str):
+            raise ValueError("stage message must be a string")
+        commands = value["commands"]
         if not isinstance(commands, list):
             raise ValueError("commands must be a list")
         parsed = []
