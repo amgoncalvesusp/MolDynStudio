@@ -91,16 +91,32 @@ def validate_topology(path: str | Path, ligand_name: str | None = None) -> Valid
         return ValidationResult(False, "Topology is missing the [ system ] section.")
     if "molecules" not in sections:
         return ValidationResult(False, "Topology is missing the [ molecules ] section.")
-    if ligand_name:
-        molecule_block = re.search(r"^\s*\[\s*molecules\s*\]\s*$([\s\S]*?)(?=^\s*\[|\Z)", text, re.IGNORECASE | re.MULTILINE)
-        names = set()
-        if molecule_block:
-            for line in molecule_block.group(1).splitlines():
-                line = line.split(";", 1)[0].strip()
-                if line and not line.startswith("#"):
-                    names.add(line.split()[0])
-        if ligand_name not in names:
-            return ValidationResult(False, f"Topology does not contain ligand molecule '{ligand_name}'.")
+    def section_body(name: str) -> str:
+        match = re.search(rf"^\s*\[\s*{re.escape(name)}\s*\]\s*$([\s\S]*?)(?=^\s*\[|\Z)", text, re.IGNORECASE | re.MULTILINE)
+        return match.group(1) if match else ""
+
+    system_lines = [line.split(";", 1)[0].strip() for line in section_body("system").splitlines() if line.split(";", 1)[0].strip() and not line.lstrip().startswith("#")]
+    if not system_lines:
+        return ValidationResult(False, "Topology [ system ] section must contain a system name.")
+    molecule_lines = []
+    for raw_line in section_body("molecules").splitlines():
+        line = raw_line.split(";", 1)[0].strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) < 2:
+            return ValidationResult(False, "Topology contains an invalid [ molecules ] line.")
+        try:
+            count = int(fields[1])
+        except ValueError:
+            return ValidationResult(False, "Topology molecule count must be an integer.")
+        if count <= 0:
+            return ValidationResult(False, "Topology molecule count must be positive.")
+        molecule_lines.append((fields[0], count))
+    if not molecule_lines:
+        return ValidationResult(False, "Topology [ molecules ] section must contain at least one molecule.")
+    if ligand_name and ligand_name not in {name for name, _count in molecule_lines}:
+        return ValidationResult(False, f"Topology does not contain ligand molecule '{ligand_name}'.")
     return ValidationResult(True, "Topology is valid.")
 
 

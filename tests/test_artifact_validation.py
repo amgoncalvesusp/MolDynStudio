@@ -49,6 +49,13 @@ class ArtifactValidationTests(unittest.TestCase):
                     result = validate_gro(self.write(directory, f"bad{index}.gro", content))
                     self.assertFalse(result.ok)
 
+    def test_validate_gro_rejects_zero_box_and_accepts_full_box(self):
+        with tempfile.TemporaryDirectory() as directory:
+            zero = VALID_GRO.replace("1.00000   1.00000   1.00000", "0.00000   1.00000   1.00000")
+            self.assertFalse(validate_gro(self.write(directory, "zero.gro", zero)).ok)
+            full = VALID_GRO.replace("1.00000   1.00000   1.00000", "1 1 1 0 0 0 0 0 0")
+            self.assertTrue(validate_gro(self.write(directory, "full.gro", full)).ok)
+
     def test_validate_topology_requires_sections_and_ligand(self):
         with tempfile.TemporaryDirectory() as directory:
             valid = self.write(
@@ -62,6 +69,17 @@ class ArtifactValidationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("molecules", result.message.lower())
 
+    def test_validate_topology_rejects_empty_sections_and_missing_ligand(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty = self.write(directory, "empty.top", "[ system ]\n\n[ molecules ]\n")
+            self.assertFalse(validate_topology(empty).ok)
+            no_molecules = self.write(directory, "none.top", "[ system ]\nName\n[ molecules ]\n")
+            self.assertFalse(validate_topology(no_molecules).ok)
+            no_ligand = self.write(directory, "nolig.top", "[ system ]\nName\n[ molecules ]\nProtein 1\n")
+            result = validate_topology(no_ligand, ligand_name="LIG")
+        self.assertFalse(result.ok)
+        self.assertIn("ligand", result.message.lower())
+
     def test_external_checks_preserve_diagnostic_output(self):
         with tempfile.TemporaryDirectory() as directory:
             tpr = self.write(directory, "topol.tpr", "binary placeholder")
@@ -73,8 +91,19 @@ class ArtifactValidationTests(unittest.TestCase):
             ]
             self.assertTrue(validate_tpr(tpr, bridge=bridge).ok)
             result = validate_checkpoint(cpt, bridge=bridge)
+            self.assertEqual(bridge.run.call_args_list[0].args[0], ["gmx", "dump", "-s", str(tpr)])
+            self.assertEqual(bridge.run.call_args_list[1].args[0], ["gmx", "dump", "-cp", str(cpt)])
         self.assertFalse(result.ok)
         self.assertIn("fatal cpt diagnostic", result.message)
+
+    def test_external_check_exception_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(directory, "topol.tpr", "placeholder")
+            bridge = Mock()
+            bridge.run.side_effect = RuntimeError("bridge unavailable")
+            result = validate_tpr(path, bridge=bridge)
+        self.assertFalse(result.ok)
+        self.assertIn("bridge unavailable", result.message)
 
     def test_validate_stage_outputs_reports_each_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -83,6 +112,18 @@ class ArtifactValidationTests(unittest.TestCase):
         self.assertIsInstance(result, ValidationResult)
         self.assertTrue(result.ok)
         self.assertIn("structure", result.details)
+
+    def test_validate_stage_outputs_propagates_ligand_and_bridge_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            top = self.write(directory, "topol.top", "[ system ]\nName\n[ molecules ]\nProtein 1\n")
+            tpr = self.write(directory, "topol.tpr", "placeholder")
+            bridge = Mock()
+            bridge.run.return_value = SimpleNamespace(returncode=3, stdout="", stderr="bad tpr")
+            result = validate_stage_outputs({"topology": top, "tpr": tpr}, ligand_name="LIG", bridge=bridge)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.details["topology"].ok)
+        self.assertIn("LIG", result.details["topology"].message)
+        self.assertIn("bad tpr", result.details["tpr"].message)
 
 
 if __name__ == "__main__":
