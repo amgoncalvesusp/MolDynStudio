@@ -436,16 +436,22 @@ def build_conda_env_sync_script(env_file: str, env_name: str = DEFAULT_ENV) -> s
 
     quoted_env_file = shlex.quote(env_file)
     quoted_env_name = shlex.quote(env_name)
+    update_message = shlex.quote(
+        f"[env] updating existing {env_name} environment from {env_file}"
+    )
+    create_message = shlex.quote(
+        f"[env] creating {env_name} environment from {env_file}"
+    )
     return (
         build_conda_bootstrap_script()
         + "\n"
         + f"""
 if conda env list | awk '{{print $1}}' | grep -qx {quoted_env_name}; then
-  echo "[env] updating existing {env_name} environment from {env_file}"
+  echo {update_message}
   conda env update -n {quoted_env_name} -f {quoted_env_file} --prune
 else
-  echo "[env] creating {env_name} environment from {env_file}"
-  conda env create -f {quoted_env_file}
+  echo {create_message}
+  conda env create -n {quoted_env_name} -f {quoted_env_file}
 fi
 """.strip()
     )

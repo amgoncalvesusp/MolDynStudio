@@ -213,6 +213,52 @@ class SettingsMigrationTests(unittest.TestCase):
 
 
 class SetupWizardCapabilityStatusTests(unittest.TestCase):
+    def test_create_environment_syncs_the_saved_non_default_environment(self):
+        wizard = mock.Mock()
+        wizard._worker = None
+        wizard.settings.value.return_value = "research"
+
+        with (
+            mock.patch(
+                "setup_wizard.wsl_bridge.win_to_wsl",
+                return_value="/mnt/c/project/environment.yml",
+            ),
+            mock.patch(
+                "setup_wizard.wsl_bridge.build_conda_env_sync_script",
+                return_value="sync research",
+            ) as build_sync,
+            mock.patch(
+                "setup_wizard.wsl_bridge.popen_raw_shell"
+            ) as popen_raw_shell,
+            mock.patch("setup_wizard._CommandWorker") as worker_type,
+        ):
+            SetupWizard._create_env(wizard)
+            build_proc = worker_type.call_args.args[0]
+            build_proc()
+
+        wizard.settings.value.assert_called_once_with(
+            "conda_environment", "moldynstudio"
+        )
+        build_sync.assert_called_once_with(
+            "/mnt/c/project/environment.yml", env_name="research"
+        )
+        popen_raw_shell.assert_called_once_with("sync research")
+
+    def test_non_default_environment_name_overrides_yaml_name_on_create(self):
+        script = gromacs_capabilities.wsl_bridge.build_conda_env_sync_script(
+            "/mnt/c/project/environment.yml", env_name="research"
+        )
+
+        self.assertIn(
+            "conda env create -n research -f /mnt/c/project/environment.yml",
+            script,
+        )
+        self.assertIn(
+            "echo '[env] creating research environment from "
+            "/mnt/c/project/environment.yml'",
+            script,
+        )
+
     def test_environment_status_uses_saved_conda_environment(self):
         wizard = mock.Mock()
         wizard.settings.value.return_value = "research"

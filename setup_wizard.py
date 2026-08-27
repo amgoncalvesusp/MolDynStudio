@@ -298,7 +298,10 @@ class SetupWizard(QDialog):
         )
 
     def _refresh_env(self) -> None:
-        env_name = str(self.settings.value("conda_environment", "moldynstudio"))
+        env_name = (
+            str(self.settings.value("conda_environment", "moldynstudio")).strip()
+            or "moldynstudio"
+        )
         ok, msg = wsl_bridge.check_conda_env(env_name)
         self._env_ok_cached = ok  # consumed by _refresh_gmx, avoids 2nd probe
         if ok:
@@ -378,6 +381,10 @@ class SetupWizard(QDialog):
         if self._worker is not None and self._worker.isRunning():
             self.log.append("[env] a setup task is already running.")
             return
+        env_name = (
+            str(self.settings.value("conda_environment", "moldynstudio")).strip()
+            or "moldynstudio"
+        )
         env_yml = REPO_ROOT / "environment.yml"
         # conda runs inside WSL — must receive a WSL path, not a Windows one.
         try:
@@ -395,7 +402,9 @@ class SetupWizard(QDialog):
 
         def build_proc() -> subprocess.Popen:
             return wsl_bridge.popen_raw_shell(
-                wsl_bridge.build_conda_env_sync_script(env_yml_for_wsl)
+                wsl_bridge.build_conda_env_sync_script(
+                    env_yml_for_wsl, env_name=env_name
+                )
             )
 
         self._worker = _CommandWorker(build_proc, parent=self)

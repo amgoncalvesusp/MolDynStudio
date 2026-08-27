@@ -201,7 +201,10 @@ class WSLBridgeWrapTests(unittest.TestCase):
         )
 
         self.assertIn("Miniforge3-Linux-x86_64.sh", script)
-        self.assertIn("conda env create -f /mnt/c/work/environment.yml", script)
+        self.assertIn(
+            "conda env create -n moldynstudio -f /mnt/c/work/environment.yml",
+            script,
+        )
         self.assertIn("conda env update -n moldynstudio", script)
         self.assertNotIn("sudo", script)
 
