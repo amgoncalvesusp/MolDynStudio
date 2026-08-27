@@ -32,12 +32,13 @@ from core.forcefield_manager import (
     install_charmm36_archive,
     is_valid_force_field,
 )
-from core.system_prep import SystemPrepParams, SystemPrepWorker
+from core.preparation_orchestrator import PreparationRequest, PreparationWorker
+from core.settings import SettingsStore
+from core.system_prep import SystemPrepParams
 from tabs.base import MolDynBasePage, PathSelector
 from utils.file_validators import validate_md_inputs
 from utils.mdp_generator import MDParameters, generate_all_mdp
 from utils.tooltips import tooltip
-from utils.topology_builder import LigandParams, LigandParamWorker
 from windows.mdp_editor import MDPEditor
 
 
@@ -60,8 +61,9 @@ class ForceFieldImportWorker(QThread):
 
 
 class MDSetupTab(MolDynBasePage):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, settings=None):
         super().__init__(parent)
+        self.settings = settings or SettingsStore()
         outer = QVBoxLayout(self)
         title = QLabel("MD Setup")
         title.setObjectName("PageTitle")
@@ -321,8 +323,8 @@ class MDSetupTab(MolDynBasePage):
             )
             return
 
-        self._prep_worker = SystemPrepWorker(
-            SystemPrepParams(
+        request = PreparationRequest(
+            system=SystemPrepParams(
                 pdb_path=protein_path,
                 work_dir=work_dir,
                 force_field=force_field,
@@ -331,8 +333,18 @@ class MDSetupTab(MolDynBasePage):
                 box_padding_nm=float(self.fields["box_padding"].value()),
                 ion_concentration_m=float(self.fields["ion_concentration"].value()),
             ),
-            parent=self,
+            ligand_path=ligand_path or None,
+            charge_method=self.fields["charge_method"].currentText(),
+            net_charge=int(self.fields["charge"].value()),
+            md_parameters=self.md_parameters(),
+            gromacs_binary=str(self.settings.value("gromacs_binary", "auto")),
+            conda_environment=str(
+                self.settings.value("conda_environment", "moldynstudio")
+            ),
+            requested_cores=max(1, int(self.settings.value("cores", 4))),
+            gpu_mode=str(self.settings.value("gpu_mode", "Auto")),
         )
+        self._prep_worker = PreparationWorker(request, parent=self)
         self._prep_worker.log.connect(lambda line: self.request_log.emit(line))
         self._prep_worker.done.connect(
             lambda ok, msg: self.request_log.emit(
@@ -340,29 +352,10 @@ class MDSetupTab(MolDynBasePage):
             )
         )
         self.request_log.emit(
-            f"Starting system preparation pipeline (force field: "
+            f"Starting complete system preparation pipeline (force field: "
             f"{self.fields['force_field'].currentText()})."
         )
         self._prep_worker.start()
-
-        if ligand_path:
-            self._lig_worker = LigandParamWorker(
-                LigandParams(
-                    ligand_path=ligand_path,
-                    work_dir=work_dir,
-                    charge_method=self.fields["charge_method"].currentText(),
-                    net_charge=int(self.fields["charge"].value()),
-                ),
-                parent=self,
-            )
-            self._lig_worker.log.connect(lambda line: self.request_log.emit(line))
-            self._lig_worker.done.connect(
-                lambda ok, msg: self.request_log.emit(
-                    ("[OK] " if ok else "[FAIL] ") + msg
-                )
-            )
-            self.request_log.emit("Starting ACPYPE ligand parameterization.")
-            self._lig_worker.start()
 
     def _select_charmm_archive(self) -> str:
         path, _ = QFileDialog.getOpenFileName(

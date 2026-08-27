@@ -14,7 +14,6 @@ so the same code path works on Windows (through WSL2) and on Linux/macOS.
 
 from __future__ import annotations
 
-import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -36,12 +35,7 @@ except Exception:  # pragma: no cover - allow headless import
 from core import wsl_bridge
 from core.forcefield_manager import (
     CHARMM36_BASENAME,
-    ForceFieldUnavailableError,
     stage_charmm36_force_field,
-)
-from utils.structure_validation import (
-    CovalentLigandError,
-    ensure_noncovalent_complex,
 )
 
 
@@ -105,6 +99,63 @@ class SystemPrepParams:
     ion_concentration_m: float = 0.15
     ion_pos: str = "NA"
     ion_neg: str = "CL"
+    gromacs_binary: str = "gmx"
+    conda_environment: str = "moldynstudio"
+
+
+def build_pdb2gmx_step(
+    params: SystemPrepParams,
+) -> tuple[str, str, list[str], str | None]:
+    """Build the protein topology step without embedding an executable."""
+
+    ff = FORCE_FIELD_MAP.get(params.force_field, params.force_field.lower())
+    wm = WATER_MODEL_MAP.get(params.water_model, params.water_model.lower())
+    return (
+        "Running pdb2gmx (topology generation)...",
+        "pdb2gmx",
+        [
+            "-f", wsl_bridge.win_to_wsl(params.pdb_path),
+            "-o", "protein.gro",
+            "-p", "topol.top",
+            "-water", wm,
+            "-ff", ff,
+            "-ignh",
+        ],
+        None,
+    )
+
+
+def build_box_solvent_ion_steps(
+    params: SystemPrepParams,
+    coordinate_input: str = "protein.gro",
+) -> list[tuple[str, str, list[str], str | None]]:
+    """Build the setup tail shared by protein and complex workflows."""
+
+    is_charmm = params.force_field.upper().startswith("CHARMM")
+    positive_ion = "SOD" if is_charmm and params.ion_pos == "NA" else params.ion_pos
+    negative_ion = "CLA" if is_charmm and params.ion_neg == "CL" else params.ion_neg
+    return [
+        (
+            "Defining simulation box...", "editconf",
+            ["-f", coordinate_input, "-o", "boxed.gro", "-c", "-d", f"{params.box_padding_nm:.3f}", "-bt", params.box_type.lower()],
+            None,
+        ),
+        (
+            "Adding solvent...", "solvate",
+            ["-cp", "boxed.gro", "-cs", "spc216.gro", "-o", "solvated.gro", "-p", "topol.top"],
+            None,
+        ),
+        (
+            "Preparing ion addition (grompp)...", "grompp",
+            ["-f", "ions.mdp", "-c", "solvated.gro", "-p", "topol.top", "-o", "ions.tpr"],
+            None,
+        ),
+        (
+            "Adding neutralizing ions...", "genion",
+            ["-s", "ions.tpr", "-o", "system.gro", "-p", "topol.top", "-pname", positive_ion, "-nname", negative_ion, "-neutral", "-conc", f"{params.ion_concentration_m:.4f}"],
+            "SOL\n",
+        ),
+    ]
 
 
 class SystemPrepWorker(QThread):
@@ -119,72 +170,8 @@ class SystemPrepWorker(QThread):
         self.p = params
 
     def _steps(self) -> list[tuple[str, list[str]]]:
-        p = self.p
-        ff = FORCE_FIELD_MAP.get(p.force_field, p.force_field.lower())
-        wm = WATER_MODEL_MAP.get(p.water_model, p.water_model.lower())
-        wsl_pdb = wsl_bridge.win_to_wsl(p.pdb_path)
-        is_charmm = p.force_field.upper().startswith("CHARMM")
-        positive_ion = "SOD" if is_charmm and p.ion_pos == "NA" else p.ion_pos
-        negative_ion = "CLA" if is_charmm and p.ion_neg == "CL" else p.ion_neg
-
-        return [
-            (
-                "Running pdb2gmx (topology generation)...",
-                [
-                    "pdb2gmx",
-                    "-f", wsl_pdb,
-                    "-o", "processed.gro",
-                    "-p", "topol.top",
-                    "-water", wm,
-                    "-ff", ff,
-                    "-ignh",
-                ],
-            ),
-            (
-                "Defining simulation box...",
-                [
-                    "editconf",
-                    "-f", "processed.gro",
-                    "-o", "boxed.gro",
-                    "-c",
-                    "-d", f"{p.box_padding_nm:.3f}",
-                    "-bt", p.box_type.lower(),
-                ],
-            ),
-            (
-                "Adding solvent...",
-                [
-                    "solvate",
-                    "-cp", "boxed.gro",
-                    "-cs", "spc216.gro",
-                    "-o", "solvated.gro",
-                    "-p", "topol.top",
-                ],
-            ),
-            (
-                "Preparing ion addition (grompp)...",
-                [
-                    "grompp",
-                    "-f", "ions.mdp",
-                    "-c", "solvated.gro",
-                    "-p", "topol.top",
-                    "-o", "ions.tpr",
-                ],
-            ),
-            (
-                "Adding neutralizing ions...",
-                [
-                    "genion",
-                    "-s", "ions.tpr",
-                    "-o", "system.gro",
-                    "-p", "topol.top",
-                    "-pname", positive_ion,
-                    "-nname", negative_ion,
-                    "-neutral",
-                    "-conc", f"{p.ion_concentration_m:.4f}",
-                ],
-            ),
-        ]
+        steps = [build_pdb2gmx_step(self.p), *build_box_solvent_ion_steps(self.p)]
+        return [(description, [subcommand, *args]) for description, subcommand, args, _stdin in steps]
 
     def _ensure_force_field(self) -> None:
         if not self.p.force_field.upper().startswith("CHARMM36"):
@@ -202,70 +189,24 @@ class SystemPrepWorker(QThread):
         )
 
     def run(self) -> None:  # QThread entry point
+        # Compatibility wrapper. New UI code uses PreparationWorker directly.
+        from core.preparation_orchestrator import (
+            PreparationError,
+            PreparationOrchestrator,
+            PreparationRequest,
+        )
+
+        request = PreparationRequest(
+            system=self.p,
+            gromacs_binary=self.p.gromacs_binary,
+            conda_environment=self.p.conda_environment,
+        )
+        service = PreparationOrchestrator(
+            request, on_log=self.log.emit, on_progress=self.progress.emit
+        )
         try:
-            Path(self.p.work_dir).mkdir(parents=True, exist_ok=True)
-            # Reject UNC/network paths before structure validation performs
-            # any file I/O. WSL cannot map them safely to /mnt/<drive>.
-            if self.p.pdb_path.startswith(("\\\\", "//")):
-                raise ValueError(
-                    "UNC/network paths are not supported. Copy the input "
-                    "structure to a local drive first."
-                )
-            wsl_bridge.win_to_wsl(self.p.pdb_path)
-            ensure_noncovalent_complex(self.p.pdb_path)
-            self._ensure_force_field()
-            self._ensure_ions_mdp()
-        except (
-            CovalentLigandError,
-            ForceFieldUnavailableError,
-            OSError,
-            ValueError,
-        ) as exc:
-            self.done.emit(False, f"Could not prepare work dir: {exc}")
+            service.run()
+        except PreparationError as exc:
+            self.done.emit(False, str(exc))
             return
-
-        steps = self._steps()
-        for index, (description, args) in enumerate(steps, start=1):
-            self.log.emit(description)
-            recent_output: list[str] = []
-            try:
-                if args[0] == "genion":
-                    # genion needs interactive stdin: which solvent group to
-                    # replace with ions. Pipe "SOL" via printf so there is
-                    # only one bash subshell, not two.
-                    quoted = " ".join(shlex.quote(str(a)) for a in args)
-                    proc = wsl_bridge.popen(
-                        ["bash", "-c", f"printf 'SOL\\n' | gmx {quoted}"],
-                        cwd=self.p.work_dir,
-                    )
-                else:
-                    proc = wsl_bridge.gmx_popen(args, cwd=self.p.work_dir)
-                if proc.stdout is None:
-                    self.done.emit(False, f"No stdout for step '{description}'.")
-                    return
-                try:
-                    for line in proc.stdout:
-                        clean_line = line.rstrip()
-                        self.log.emit(clean_line)
-                        if clean_line.strip():
-                            recent_output.append(clean_line)
-                            del recent_output[:-8]
-                finally:
-                    rc = proc.wait()
-                stderr = getattr(proc, "stderr", None)
-                if isinstance(stderr, str):
-                    recent_output.extend(line for line in stderr.splitlines() if line.strip())
-                    del recent_output[:-8]
-            except (OSError, FileNotFoundError) as exc:
-                self.done.emit(False, f"Failed to launch step '{description}': {exc}")
-                return
-            if rc != 0:
-                detail = "\n".join(recent_output)
-                message = f"Step failed (exit {rc}): {description}"
-                if detail:
-                    message += f"\nRecent output:\n{detail}"
-                self.done.emit(False, message)
-                return
-            self.progress.emit(int(index / len(steps) * 100))
-
         self.done.emit(True, "System preparation complete.")

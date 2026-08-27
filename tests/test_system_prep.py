@@ -55,33 +55,34 @@ class SystemPrepTests(unittest.TestCase):
         self.assertNotIn("-maxwarn", grompp)
         self.assertNotIn("5", grompp)
 
-    def test_grompp_failure_includes_recent_output(self):
+    def test_steps_are_subcommands_without_an_embedded_gmx_shell(self):
+        worker = SystemPrepWorker(
+            SystemPrepParams(pdb_path="protein.pdb", work_dir="project")
+        )
+
+        commands = [args for _description, args in worker._steps()]
+
+        self.assertEqual(
+            [args[0] for args in commands],
+            ["pdb2gmx", "editconf", "solvate", "grompp", "genion"],
+        )
+        self.assertTrue(all("bash" not in args and "gmx" not in args for args in commands))
+
+    def test_compatibility_worker_forwards_orchestrator_failure_detail(self):
         worker = SystemPrepWorker(
             SystemPrepParams(pdb_path="protein.pdb", work_dir="project")
         )
         result: list[tuple[bool, str]] = []
         worker.done.connect(lambda ok, message: result.append((ok, message)))
-        process = mock.Mock()
-        process.stdout = iter(
-            [
-                "irrelevant startup output\n",
-                "WARNING 1 [file ions.mdp, line 4]: suspicious setting\n",
-                "Fatal error: cannot continue\n",
-            ]
-        )
-        process.wait.return_value = 1
 
-        with (
-            mock.patch("core.system_prep.ensure_noncovalent_complex"),
-            mock.patch.object(worker, "_ensure_force_field"),
-            mock.patch.object(worker, "_ensure_ions_mdp"),
-            mock.patch.object(
-                worker,
-                "_steps",
-                return_value=[("Preparing ion addition (grompp)...", ["grompp"])],
+        from core.preparation_orchestrator import PreparationError
+
+        with mock.patch(
+            "core.preparation_orchestrator.PreparationOrchestrator.run",
+            side_effect=PreparationError(
+                "WARNING 1 [file ions.mdp]: suspicious setting\n"
+                "Fatal error: cannot continue"
             ),
-            mock.patch("core.system_prep.wsl_bridge.win_to_wsl", return_value="/tmp/protein.pdb"),
-            mock.patch("core.system_prep.wsl_bridge.gmx_popen", return_value=process),
         ):
             worker.run()
 
@@ -126,24 +127,25 @@ class SystemPrepTests(unittest.TestCase):
             self.assertIn("vdw-modifier  = force-switch", content)
 
     def test_rejects_unc_input_before_reading_the_remote_file(self):
-        worker = SystemPrepWorker(
-            SystemPrepParams(
-                pdb_path=r"\\server\share\protein.pdb",
-                work_dir="project",
-                force_field="CHARMM36m",
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = SystemPrepWorker(
+                SystemPrepParams(
+                    pdb_path=r"\\server\share\protein.pdb",
+                    work_dir=tmp,
+                    force_field="CHARMM36m",
+                )
             )
-        )
-        result: list[tuple[bool, str]] = []
-        worker.done.connect(lambda ok, message: result.append((ok, message)))
+            result: list[tuple[bool, str]] = []
+            worker.done.connect(lambda ok, message: result.append((ok, message)))
 
-        with mock.patch(
-            "core.system_prep.ensure_noncovalent_complex",
-        ) as validate_structure:
-            worker.run()
+            with mock.patch(
+                "core.preparation_orchestrator.ensure_noncovalent_complex",
+            ) as validate_structure:
+                worker.run()
 
-        validate_structure.assert_not_called()
-        self.assertFalse(result[-1][0])
-        self.assertIn("UNC", result[-1][1])
+            validate_structure.assert_not_called()
+            self.assertFalse(result[-1][0])
+            self.assertIn("UNC", result[-1][1])
 
 
 if __name__ == "__main__":

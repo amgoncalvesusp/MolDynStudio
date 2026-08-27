@@ -100,7 +100,7 @@ class MDSetupTabTests(unittest.TestCase):
 
         with (
             mock.patch("tabs.md_setup_tab.QMessageBox.warning") as warning,
-            mock.patch("tabs.md_setup_tab.SystemPrepWorker") as prep,
+            mock.patch("tabs.md_setup_tab.PreparationWorker") as prep,
         ):
             widget.generate_topology_preview()
 
@@ -135,6 +135,35 @@ class MDSetupTabTests(unittest.TestCase):
         widget.fields["force_field"].setCurrentText("AMBER99SB-ILDN")
 
         self.assertTrue(widget.fields["water_model"].isEnabled())
+
+    def test_starts_exactly_one_high_level_preparation_worker(self):
+        settings = mock.Mock()
+        settings.value.side_effect = lambda key, default=None: {
+            "gromacs_binary": "custom-gmx",
+            "conda_environment": "custom-env",
+            "cores": 8,
+            "gpu_mode": "CPU only",
+        }.get(key, default)
+        widget = MDSetupTab(settings=settings)
+        widget.fields["project_dir"].setText("project")
+        widget.fields["protein"].setText("protein.pdb")
+        widget.fields["ligand"].setText("ligand.sdf")
+        worker = mock.Mock()
+
+        with mock.patch(
+            "tabs.md_setup_tab.PreparationWorker", return_value=worker
+        ) as worker_type:
+            widget.generate_topology_preview()
+
+        worker_type.assert_called_once()
+        request = worker_type.call_args.args[0]
+        self.assertEqual(request.ligand_path, "ligand.sdf")
+        self.assertEqual(request.gromacs_binary, "custom-gmx")
+        self.assertEqual(request.conda_environment, "custom-env")
+        worker.log.connect.assert_called_once()
+        worker.done.connect.assert_called_once()
+        worker.start.assert_called_once()
+        self.assertFalse(hasattr(widget, "_lig_worker"))
 
 
 if __name__ == "__main__":
