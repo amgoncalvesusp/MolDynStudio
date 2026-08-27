@@ -80,6 +80,19 @@ class ArtifactValidationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("ligand", result.message.lower())
 
+    def test_validate_topology_rejects_non_integer_zero_and_extra_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            contents = (
+                "Protein nope",
+                "Protein 0",
+                "Protein 1 unexpected",
+            )
+            for index, molecule in enumerate(contents):
+                topology = f"[ system ]\nName\n[ molecules ]\n{molecule}\n"
+                result = validate_topology(self.write(directory, f"invalid{index}.top", topology))
+                with self.subTest(molecule=molecule):
+                    self.assertFalse(result.ok)
+
     def test_external_checks_preserve_diagnostic_output(self):
         with tempfile.TemporaryDirectory() as directory:
             tpr = self.write(directory, "topol.tpr", "binary placeholder")

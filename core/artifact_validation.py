@@ -104,7 +104,7 @@ def validate_topology(path: str | Path, ligand_name: str | None = None) -> Valid
         if not line or line.startswith("#"):
             continue
         fields = line.split()
-        if len(fields) < 2:
+        if len(fields) != 2:
             return ValidationResult(False, "Topology contains an invalid [ molecules ] line.")
         try:
             count = int(fields[1])
