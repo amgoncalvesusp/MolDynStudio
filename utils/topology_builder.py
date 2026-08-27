@@ -129,13 +129,30 @@ def _is_posre(path: Path) -> bool:
     return bool(re.search(r"(?im)^\s*\[\s*position_restraints\s*\]", text))
 
 
+_INCLUDE_PATTERN = re.compile(
+    r'(?im)^(?P<prefix>\s*#include\s+)(?P<target>"[^"\r\n]+"|<[^>\r\n]+>)'
+)
+
+
 def _restraint_include_names(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8", errors="replace")
     return [
-        Path(match.group(1)).name
-        for match in re.finditer(r'(?im)^\s*#include\s+["<]([^">]+)[">]', text)
-        if "posre" in Path(match.group(1)).name.lower()
+        Path(match.group("target")[1:-1]).name
+        for match in _INCLUDE_PATTERN.finditer(text)
+        if "posre" in Path(match.group("target")[1:-1]).name.lower()
     ]
+
+
+def _rewrite_restraint_include(text: str, normalized_name: str) -> str:
+    def replace_target(match: re.Match[str]) -> str:
+        target = match.group("target")
+        if "posre" not in Path(target[1:-1]).name.lower():
+            return match.group(0)
+        return (
+            f'{match.group("prefix")}{target[0]}{normalized_name}{target[-1]}'
+        )
+
+    return _INCLUDE_PATTERN.sub(replace_target, text)
 
 
 def _is_gro(path: Path) -> bool:
@@ -186,32 +203,48 @@ def normalize_acpype_outputs(acpype_dir: str | Path, project_dir: str | Path) ->
         gro = gros[0]
     else:
         raise AcpypeOutputError("Could not identify one unambiguous ACPYPE GRO structure")
-    posre_candidates = {
-        p.name.lower(): p
-        for p in source.rglob("*.itp")
-        if not in_destination(p) and _is_posre(p)
-    }
+    posre_candidates = tuple(
+        candidate
+        for candidate in source.rglob("*.itp")
+        if not in_destination(candidate) and _is_posre(candidate)
+    )
     includes = _restraint_include_names(itp)
-    posres: list[Path] = []
-    for include_name in includes:
-        restraint = posre_candidates.get(include_name.lower())
-        if restraint is None:
+
+    def resolve_restraint(include_name: str) -> Path:
+        candidates = tuple(
+            candidate
+            for candidate in posre_candidates
+            if candidate.name.lower() == include_name.lower()
+        )
+        if not candidates:
             raise AcpypeOutputError(
                 f"Referenced position-restraint ITP is missing: {include_name}"
             )
-        posres.append(restraint)
+        if len(candidates) > 1:
+            raise AcpypeOutputError(
+                f"Ambiguous position-restraint ITP reference: {include_name}"
+            )
+        return candidates[0]
+
+    posres = tuple(resolve_restraint(include_name) for include_name in includes)
     if len(posres) > 1:
         raise AcpypeOutputError("Multiple position-restraint ITP files referenced")
     destination.mkdir(parents=True, exist_ok=True)
     out_gro = destination / "ligand.gro"
     out_itp = destination / "ligand.itp"
     shutil.copyfile(gro, out_gro)
-    shutil.copyfile(itp, out_itp)
     out_posre = destination / "ligand_posre.itp" if posres else None
     if posres:
+        normalized_itp = _rewrite_restraint_include(
+            itp.read_text(encoding="utf-8"), out_posre.name
+        )
+        out_itp.write_text(normalized_itp, encoding="utf-8")
         shutil.copyfile(posres[0], out_posre)
-    elif (destination / "ligand_posre.itp").exists():
-        (destination / "ligand_posre.itp").unlink()
+    else:
+        shutil.copyfile(itp, out_itp)
+        stale_posre = destination / "ligand_posre.itp"
+        if stale_posre.exists():
+            stale_posre.unlink()
     return LigandTopologyArtifacts(out_gro, out_itp, out_posre)
 
 
