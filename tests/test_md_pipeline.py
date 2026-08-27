@@ -38,15 +38,22 @@ class MDPipelineTests(unittest.TestCase):
             "grompp", "-f", "npt.mdp", "-c", "nvt.gro", "-r", "nvt.gro",
             "-p", "topol.top", "-o", "npt.tpr",
         ))
+        self.assertEqual(build_nvt_stage("p").commands[1].args,
+                         ("mdrun", "-deffnm", "nvt"))
+        self.assertEqual(build_npt_stage("p").commands[1].args,
+                         ("mdrun", "-deffnm", "npt"))
         self.assertEqual(build_production_stage("p").commands[0].args, (
             "grompp", "-f", "md.mdp", "-c", "npt.gro", "-p", "topol.top",
             "-o", "md.tpr",
         ))
+        self.assertEqual(build_production_stage("p").commands[1].args,
+                         ("mdrun", "-deffnm", "md"))
 
     def test_pipeline_has_canonical_dependency_order_and_resume_slice(self):
         all_stages = build_pipeline("p", tuple(StageName))
         self.assertEqual(tuple(stage.name for stage in all_stages), tuple(StageName))
-        resumed = build_pipeline("p", tuple(StageName), resume_from=StageName.NPT)
+        resumed = build_pipeline("p", tuple(StageName),
+                                 resume_from_stage=StageName.NPT)
         self.assertEqual(tuple(stage.name for stage in resumed),
                          (StageName.NPT, StageName.PRODUCTION))
 
