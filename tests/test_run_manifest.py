@@ -53,6 +53,8 @@ class RunManifestTests(unittest.TestCase):
             for mutate in (
                 lambda x: x["stages"]["preparation"].update(inputs=[]),
                 lambda x: x["stages"]["preparation"].update(outputs={"x": 3}),
+                lambda x: x["stages"]["preparation"].pop("inputs"),
+                lambda x: x["stages"]["preparation"].pop("outputs"),
                 lambda x: x["stages"]["preparation"].update(commands=["bad"]),
                 lambda x: x["stages"]["preparation"].update(commands=[{"stage": "npt", "argv": [], "cwd": "p", "started_at": "t"}]),
                 lambda x: x.update(requested_cores="4"),

@@ -173,7 +173,8 @@ def _stage_record(key: str, value: Any) -> StageRecord:
             if field_name in value and value[field_name] is not None and not isinstance(value[field_name], str):
                 raise ValueError(f"stage {field_name} must be a string or null")
         for field_name in ("inputs", "outputs"):
-            if not isinstance(value.get(field_name, {}), dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in value[field_name].items()):
+            field_value = value.get(field_name)
+            if not isinstance(field_value, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in field_value.items()):
                 raise ValueError(f"stage {field_name} must be a string mapping")
         return StageRecord(**{**value, "commands": parsed})
     except (TypeError, ValueError) as exc:
