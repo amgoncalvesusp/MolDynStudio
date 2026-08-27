@@ -3,7 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from math import isfinite
 from typing import Dict
+
+
+def _positive_finite(value: object, name: str) -> float:
+    try:
+        converted = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite number greater than zero.") from exc
+    if not isfinite(converted) or converted <= 0:
+        raise ValueError(f"{name} must be a finite number greater than zero.")
+    return converted
+
+
+def _format_mdp_float(value: float) -> str:
+    """Render a finite MDP value without rounding a positive value to zero."""
+
+    return format(value, ".15g")
 
 
 @dataclass(frozen=True)
@@ -22,15 +39,19 @@ class MDParameters:
     ion_concentration_m: float = 0.15
 
     def normalized(self) -> "MDParameters":
-        """Return a clamped copy suitable for file generation."""
+        """Return a validated, clamped copy suitable for file generation."""
+
+        duration_ns = _positive_finite(self.duration_ns, "duration_ns")
+        timestep_fs = _positive_finite(self.timestep_fs, "timestep_fs")
+        save_every_ps = _positive_finite(self.save_every_ps, "save_every_ps")
 
         return replace(
             self,
-            duration_ns=max(0.001, float(self.duration_ns)),
-            timestep_fs=max(0.001, float(self.timestep_fs)),
+            duration_ns=duration_ns,
+            timestep_fs=timestep_fs,
             temperature_k=max(1.0, float(self.temperature_k)),
             pressure_bar=max(0.001, float(self.pressure_bar)),
-            save_every_ps=max(0.001, float(self.save_every_ps)),
+            save_every_ps=save_every_ps,
             box_padding_nm=max(0.1, float(self.box_padding_nm)),
             ion_concentration_m=max(0.0, float(self.ion_concentration_m)),
         )
@@ -40,6 +61,11 @@ def _steps_for(params: MDParameters) -> tuple[int, int]:
     normalized = params.normalized()
     total_ps = normalized.duration_ns * 1000.0
     step_ps = normalized.timestep_fs / 1000.0
+    if normalized.save_every_ps < step_ps:
+        raise ValueError(
+            "save_every_ps must span at least one timestep "
+            f"({step_ps:g} ps)."
+        )
     nsteps = max(1, int(round(total_ps / step_ps)))
     nstxout = max(1, int(round(normalized.save_every_ps / step_ps)))
     return nsteps, nstxout
@@ -85,7 +111,7 @@ def generate_nvt_mdp(params: MDParameters) -> str:
 define                  = -DPOSRES
 integrator              = md
 nsteps                  = 50000
-dt                      = {params.timestep_fs / 1000.0:.4f}
+dt                      = {_format_mdp_float(params.timestep_fs / 1000.0)}
 nstxout-compressed      = 500
 nstenergy               = 500
 nstlog                  = 500
@@ -110,7 +136,7 @@ def generate_npt_mdp(params: MDParameters) -> str:
 define                  = -DPOSRES
 integrator              = md
 nsteps                  = 50000
-dt                      = {params.timestep_fs / 1000.0:.4f}
+dt                      = {_format_mdp_float(params.timestep_fs / 1000.0)}
 nstxout-compressed      = 500
 nstenergy               = 500
 nstlog                  = 500
@@ -137,7 +163,7 @@ def generate_production_mdp(params: MDParameters) -> str:
     return f"""; MolDynStudio production MD
 integrator              = md
 nsteps                  = {nsteps}
-dt                      = {params.timestep_fs / 1000.0:.4f}
+dt                      = {_format_mdp_float(params.timestep_fs / 1000.0)}
 nstxout-compressed      = {nstxout}
 nstenergy               = {nstxout}
 nstlog                  = {nstxout}
