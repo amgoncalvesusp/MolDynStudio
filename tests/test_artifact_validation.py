@@ -85,6 +85,7 @@ class ArtifactValidationTests(unittest.TestCase):
             contents = (
                 "Protein nope",
                 "Protein 0",
+                "Protein -1",
                 "Protein 1 unexpected",
             )
             for index, molecule in enumerate(contents):
