@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -536,6 +537,116 @@ class MDRunTabTests(unittest.TestCase):
 
         for attribute in ("_timer", "_sample", "start_mock_run", "_tick"):
             self.assertFalse(hasattr(tab, attribute))
+
+    def test_empty_project_context_clears_previously_loaded_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _manifest(root)
+            tab = MDRunTab(artifact_validators=_validators())
+            self.addCleanup(tab.deleteLater)
+
+            tab.load_project(str(root))
+            tab.load_project("")
+
+            self.assertEqual(
+                tab.project_context.text(),
+                "No prepared MD project loaded.",
+            )
+            self.assertIsNone(tab._project_dir)
+            self.assertIsNone(tab._manifest_file)
+            self.assertIsNone(tab._manifest)
+            self.assertEqual(
+                tab.stage_widgets[StageName.MINIMIZATION].status.text(),
+                "Not ready",
+            )
+
+    def test_main_window_handoff_and_reopen_restore_manifest_state(self):
+        from gromacs_analysis_studio_v11 import MainWindow
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_file = _manifest(root)
+            (root / "em.gro").write_text(GRO_TEXT, encoding="utf-8")
+            _set_stage_status(
+                root,
+                StageName.MINIMIZATION,
+                StageStatus.COMPLETED,
+                {"em.gro": str((root / "em.gro").resolve())},
+            )
+            session_file = root / "prepared.mds"
+
+            first = MainWindow()
+            self.addCleanup(first.deleteLater)
+            setup = first.pages["MD Setup"]
+            setup.project_prepared.emit(str(root), str(manifest_file))
+            self.assertEqual(first.active_project_dir, root.resolve())
+            self.assertEqual(first.active_manifest_path, manifest_file.resolve())
+            first.project_manager.save(session_file, first.session_data())
+
+            payload = json.loads(session_file.read_text(encoding="utf-8"))
+            context = payload["state"]["project_context"]
+            self.assertEqual(context["manifest_path"], "moldynstudio_run.json")
+
+            reopened = MainWindow()
+            self.addCleanup(reopened.deleteLater)
+            reopened.apply_session_data(
+                reopened.project_manager.load(session_file),
+                session_path=session_file,
+            )
+
+            run_tab = reopened.pages["MD Run"]
+            self.assertEqual(reopened.active_project_dir, root.resolve())
+            self.assertEqual(reopened.active_manifest_path, manifest_file.resolve())
+            self.assertEqual(
+                run_tab.stage_widgets[StageName.MINIMIZATION].status.text(),
+                "Completed",
+            )
+
+    def test_main_window_new_session_clears_active_project_context(self):
+        from gromacs_analysis_studio_v11 import MainWindow
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_file = _manifest(root)
+            window = MainWindow()
+            self.addCleanup(window.deleteLater)
+            window.pages["MD Setup"].project_prepared.emit(
+                str(root),
+                str(manifest_file),
+            )
+
+            window.new_session()
+
+            self.assertIsNone(window.active_project_dir)
+            self.assertIsNone(window.active_manifest_path)
+            self.assertEqual(
+                window.pages["MD Run"].project_context.text(),
+                "No prepared MD project loaded.",
+            )
+
+    def test_legacy_session_keeps_setup_to_run_fallback_after_migration(self):
+        from gromacs_analysis_studio_v11 import MainWindow
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _manifest(root)
+            window = MainWindow()
+            self.addCleanup(window.deleteLater)
+
+            window.apply_session_data(
+                {
+                    "pages": {
+                        "MD Setup": {"project_dir": str(root)},
+                    },
+                    "current_page": 0,
+                },
+                session_path=root / "legacy.mds",
+            )
+            window.switch_to_page("MD Run")
+
+            run_tab = window.pages["MD Run"]
+            self.assertEqual(run_tab._project_dir, root.resolve())
+            self.assertIn("Prepared project", run_tab.project_context.text())
 
 
 if __name__ == "__main__":

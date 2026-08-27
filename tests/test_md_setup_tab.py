@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -164,6 +165,99 @@ class MDSetupTabTests(unittest.TestCase):
         worker.done.connect.assert_called_once()
         worker.start.assert_called_once()
         self.assertFalse(hasattr(widget, "_lig_worker"))
+
+    def test_successful_preparation_emits_project_handoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            widget = MDSetupTab()
+            self.addCleanup(widget.deleteLater)
+            widget.fields["project_dir"].setText(directory)
+            widget.fields["protein"].setText("protein.pdb")
+            worker = mock.Mock()
+            prepared: list[tuple[str, str]] = []
+            widget.project_prepared.connect(
+                lambda project, manifest: prepared.append((project, manifest))
+            )
+
+            with mock.patch(
+                "tabs.md_setup_tab.PreparationWorker",
+                return_value=worker,
+            ):
+                widget.generate_topology_preview()
+                completion = worker.done.connect.call_args.args[0]
+                completion(True, "System preparation complete.")
+
+            project = Path(directory).resolve()
+            self.assertEqual(
+                prepared,
+                [(str(project), str(project / "moldynstudio_run.json"))],
+            )
+
+    def test_failed_preparation_does_not_emit_project_handoff(self):
+        widget = MDSetupTab()
+        self.addCleanup(widget.deleteLater)
+        widget.fields["project_dir"].setText("project")
+        widget.fields["protein"].setText("protein.pdb")
+        worker = mock.Mock()
+        prepared: list[tuple[str, str]] = []
+        widget.project_prepared.connect(
+            lambda project, manifest: prepared.append((project, manifest))
+        )
+
+        with mock.patch(
+            "tabs.md_setup_tab.PreparationWorker",
+            return_value=worker,
+        ):
+            widget.generate_topology_preview()
+            completion = worker.done.connect.call_args.args[0]
+            completion(False, "preparation failed")
+
+        self.assertEqual(prepared, [])
+
+    def test_overlapping_preparations_emit_their_own_project_directories(self):
+        with (
+            tempfile.TemporaryDirectory() as first_directory,
+            tempfile.TemporaryDirectory() as second_directory,
+        ):
+            widget = MDSetupTab()
+            self.addCleanup(widget.deleteLater)
+            widget.fields["protein"].setText("protein.pdb")
+            first_worker = mock.Mock()
+            second_worker = mock.Mock()
+            prepared: list[tuple[str, str]] = []
+            widget.project_prepared.connect(
+                lambda project, manifest: prepared.append((project, manifest))
+            )
+
+            with mock.patch(
+                "tabs.md_setup_tab.PreparationWorker",
+                side_effect=[first_worker, second_worker],
+            ):
+                widget.fields["project_dir"].setText(first_directory)
+                widget.generate_topology_preview()
+                first_completion = first_worker.done.connect.call_args.args[0]
+
+                widget.fields["project_dir"].setText(second_directory)
+                widget.generate_topology_preview()
+                second_completion = second_worker.done.connect.call_args.args[0]
+
+                first_completion(True, "first complete")
+                second_completion(True, "second complete")
+
+            first_project = Path(first_directory).resolve()
+            second_project = Path(second_directory).resolve()
+            self.assertEqual(
+                prepared,
+                [
+                    (
+                        str(first_project),
+                        str(first_project / "moldynstudio_run.json"),
+                    ),
+                    (
+                        str(second_project),
+                        str(second_project / "moldynstudio_run.json"),
+                    ),
+                ],
+            )
 
 
 if __name__ == "__main__":

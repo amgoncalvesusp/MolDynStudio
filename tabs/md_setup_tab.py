@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
@@ -33,6 +34,7 @@ from core.forcefield_manager import (
     is_valid_force_field,
 )
 from core.preparation_orchestrator import PreparationRequest, PreparationWorker
+from core.run_manifest import manifest_path
 from core.settings import SettingsStore
 from core.system_prep import SystemPrepParams
 from tabs.base import MolDynBasePage, PathSelector
@@ -61,6 +63,8 @@ class ForceFieldImportWorker(QThread):
 
 
 class MDSetupTab(MolDynBasePage):
+    project_prepared = pyqtSignal(str, str)
+
     def __init__(self, parent=None, settings=None):
         super().__init__(parent)
         self.settings = settings or SettingsStore()
@@ -345,17 +349,30 @@ class MDSetupTab(MolDynBasePage):
             gpu_mode=str(self.settings.value("gpu_mode", "Auto")),
         )
         self._prep_worker = PreparationWorker(request, parent=self)
+        project_dir = Path(request.system.work_dir).expanduser().resolve()
         self._prep_worker.log.connect(lambda line: self.request_log.emit(line))
         self._prep_worker.done.connect(
-            lambda ok, msg: self.request_log.emit(
-                ("[OK] " if ok else "[FAIL] ") + msg
-            )
+            partial(self._finish_preparation, project_dir)
         )
         self.request_log.emit(
             f"Starting complete system preparation pipeline (force field: "
             f"{self.fields['force_field'].currentText()})."
         )
         self._prep_worker.start()
+
+    def _finish_preparation(
+        self,
+        project_dir: Path,
+        ok: bool,
+        message: str,
+    ) -> None:
+        self.request_log.emit(("[OK] " if ok else "[FAIL] ") + message)
+        if not ok:
+            return
+        self.project_prepared.emit(
+            str(project_dir),
+            str(manifest_path(project_dir).resolve()),
+        )
 
     def _select_charmm_archive(self) -> str:
         path, _ = QFileDialog.getOpenFileName(

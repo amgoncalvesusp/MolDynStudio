@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon
@@ -928,6 +928,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} - {APP_VERSION}")
         self.resize(1480, 920)
         self.current_session_path: Optional[Path] = None
+        self.active_project_dir: Path | None = None
+        self.active_manifest_path: Path | None = None
+        self._project_context_was_cleared = False
         self.project_manager = ProjectManager()
         self.settings = SettingsStore()
         self._progress_value = 0
@@ -1060,6 +1063,9 @@ class MainWindow(QMainWindow):
         self._add_page("Project", ProjectPage())
         self._add_page("MD Setup", MDSetupTab(settings=self.settings))
         self._add_page("MD Run", MDRunTab(settings=self.settings))
+        setup_page = self.pages["MD Setup"]
+        if isinstance(setup_page, MDSetupTab):
+            setup_page.project_prepared.connect(self._on_project_prepared)
         self._add_page("Analysis", AnalysisTab())
         self._add_page("Load System", LoadSystemPage())
         self._add_page("Trajectory Preprocessing", PreprocessingPage())
@@ -1196,10 +1202,19 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
         name = NAV_ITEMS[index]
         if name == "MD Run":
-            setup_page = self.pages.get("MD Setup")
             run_page = self.pages.get("MD Run")
-            if isinstance(setup_page, MDSetupTab) and isinstance(run_page, MDRunTab):
-                project_dir = setup_page.fields["project_dir"].text()
+            if isinstance(run_page, MDRunTab):
+                setup_page = self.pages.get("MD Setup")
+                setup_project = (
+                    setup_page.fields["project_dir"].text()
+                    if isinstance(setup_page, MDSetupTab)
+                    else ""
+                )
+                project_dir = (
+                    str(self.active_project_dir)
+                    if self.active_project_dir is not None
+                    else "" if self._project_context_was_cleared else setup_project
+                )
                 run_page.load_project(project_dir)
         self.side_info.setPlainText(self.context_text(name))
 
@@ -1265,15 +1280,91 @@ class MainWindow(QMainWindow):
             "inventor": APP_INVENTOR,
             "current_page": self.nav.currentRow(),
             "pages": {name: page.get_state() for name, page in self.pages.items()},
+            "project_context": self._serialized_project_context(),
         }
         return data
 
-    def apply_session_data(self, data: Dict):
+    def _serialized_project_context(self) -> dict[str, str] | None:
+        if self.active_project_dir is None:
+            return None
+        manifest_file = self.active_manifest_path or (
+            self.active_project_dir / "moldynstudio_run.json"
+        )
+        try:
+            manifest_value = str(manifest_file.relative_to(self.active_project_dir))
+        except ValueError:
+            manifest_value = str(manifest_file)
+        return {
+            "project_dir": str(self.active_project_dir),
+            "manifest_path": manifest_value.replace("\\", "/"),
+        }
+
+    def _on_project_prepared(self, project_dir: str, manifest_path: str) -> None:
+        project = Path(project_dir).expanduser().resolve()
+        manifest = Path(manifest_path).expanduser()
+        if not manifest.is_absolute():
+            manifest = project / manifest
+        self.active_project_dir = project
+        self.active_manifest_path = manifest.resolve()
+        self._project_context_was_cleared = False
+        run_page = self.pages.get("MD Run")
+        if isinstance(run_page, MDRunTab):
+            run_page.load_project(str(project))
+        self.append_log(f"Prepared MD project loaded: {project}")
+
+    def _clear_project_context(self) -> None:
+        self.active_project_dir = None
+        self.active_manifest_path = None
+        self._project_context_was_cleared = True
+        run_page = self.pages.get("MD Run")
+        if isinstance(run_page, MDRunTab):
+            run_page.load_project("")
+
+    def _restore_project_context(
+        self,
+        context: object,
+        session_path: Path | None,
+    ) -> None:
+        if not isinstance(context, Mapping):
+            self._clear_project_context()
+            return
+        project_text = str(context.get("project_dir", "")).strip()
+        if not project_text:
+            self._clear_project_context()
+            return
+        project = Path(project_text).expanduser()
+        if not project.is_absolute():
+            base = session_path.parent if session_path is not None else Path.cwd()
+            project = base / Path(project_text.replace("\\", "/"))
+        project = project.resolve()
+        manifest_text = str(context.get("manifest_path", "")).strip()
+        manifest_reference = manifest_text or "moldynstudio_run.json"
+        manifest = Path(manifest_reference).expanduser()
+        if not manifest.is_absolute():
+            manifest = project / Path(manifest_reference.replace("\\", "/"))
+        self._on_project_prepared(str(project), str(manifest))
+
+    def apply_session_data(
+        self,
+        data: Dict[str, Any],
+        *,
+        session_path: str | Path | None = None,
+    ):
         pages = data.get("pages", {})
         for name, state in pages.items():
             page = self.pages.get(name)
             if page is not None:
                 page.set_state(state)
+        source = Path(session_path) if session_path is not None else None
+        if "project_context" in data:
+            self._restore_project_context(data.get("project_context"), source)
+        else:
+            self.active_project_dir = None
+            self.active_manifest_path = None
+            self._project_context_was_cleared = False
+            run_page = self.pages.get("MD Run")
+            if isinstance(run_page, MDRunTab):
+                run_page.load_project("")
         current_page = int(data.get("current_page", 0))
         self.nav.setCurrentRow(max(0, min(current_page, len(NAV_ITEMS) - 1)))
 
@@ -1282,6 +1373,7 @@ class MainWindow(QMainWindow):
             page.set_state({})
         self.log.clear()
         self.progress.setValue(0)
+        self._clear_project_context()
         self.current_session_path = None
         self.nav.setCurrentRow(0)
         self.append_log("Started a new MolDynStudio project.")
@@ -1305,7 +1397,7 @@ class MainWindow(QMainWindow):
                 data = self.project_manager.load(in_path)
             else:
                 data = json.loads(in_path.read_text(encoding="utf-8"))
-            self.apply_session_data(data)
+            self.apply_session_data(data, session_path=in_path)
             self.current_session_path = in_path
             self.append_log(f"Project loaded from: {in_path}")
         except (ProjectFormatError, json.JSONDecodeError, OSError, ValueError) as exc:
