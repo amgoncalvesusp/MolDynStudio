@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.gromacs_capabilities import GPU_MODE_SUPPORTED
+
 try:
     from PyQt5.QtCore import QSettings
 except Exception:  # pragma: no cover - used only when PyQt5 is unavailable
@@ -33,12 +35,16 @@ class SettingsStore:
     def value(self, key: str, default: Any = None) -> Any:
         fallback = getattr(self.defaults, key, default)
         if self._settings is None:
-            return self._fallback.get(key, fallback)
-        return self._settings.value(key, fallback)
+            value = self._fallback.get(key, fallback)
+        else:
+            value = self._settings.value(key, fallback)
+        if key == "gpu_mode" and value in {"CUDA", "OpenCL"}:
+            value = GPU_MODE_SUPPORTED
+            self.set_value(key, value)
+        return value
 
     def set_value(self, key: str, value: Any) -> None:
         if self._settings is None:
             self._fallback = {**self._fallback, key: value}
             return
         self._settings.setValue(key, value)
-

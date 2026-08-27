@@ -5,7 +5,7 @@ channels:
 dependencies:
   - python=3.11
   - pip
-  - gromacs
+  - gromacs=2026.3
   - ambertools=23
   - gmx_mmpbsa
   - mdanalysis

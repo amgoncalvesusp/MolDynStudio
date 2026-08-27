@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from core import wsl_bridge
+from core.gromacs_capabilities import probe_gromacs
 
 try:
     from PyQt5.QtCore import QThread, pyqtSignal
@@ -31,7 +32,7 @@ except Exception:  # pragma: no cover - keeps pure helpers importable without Py
 
 
 REQUIRED_PACKAGES: Mapping[str, str] = {
-    "gromacs": "conda-forge::gromacs",
+    "gromacs": "conda-forge::gromacs=2026.3",
     "ambertools": "conda-forge::ambertools=23",
     "gmx_mmpbsa": "conda-forge::gmx_mmpbsa",
     "mdanalysis": "conda-forge::mdanalysis",
@@ -104,8 +105,9 @@ class DependencyChecker(QThread):
         self.all_done.emit(not missing)
 
     def is_installed(self, package: str) -> bool:
+        if package == "gromacs":
+            return probe_gromacs("gmx", self.env_name).executable_ok
         executable = {
-            "gromacs": "gmx",
             "ambertools": "cpptraj",
             "acpype": "acpype",
         }.get(package)

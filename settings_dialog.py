@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 )
 
 from core.settings import SettingsStore
+from core.gromacs_capabilities import GPU_MODES
 
 
 class SettingsDialog(QDialog):
@@ -45,7 +46,7 @@ class SettingsDialog(QDialog):
         form.addRow(f"Cores for MD (detected: {os.cpu_count() or 1})", self.cores)
 
         self.gpu = QComboBox()
-        self.gpu.addItems(["Auto", "CPU only", "CUDA", "OpenCL"])
+        self.gpu.addItems(list(GPU_MODES))
         self.gpu.setCurrentText(str(settings.value("gpu_mode", "Auto")))
         form.addRow("GPU acceleration", self.gpu)
 
@@ -95,4 +96,3 @@ class SettingsDialog(QDialog):
         self.settings.set_value("theme", self.theme.currentText())
         self.settings.set_value("language", self.language.currentText())
         self.accept()
-

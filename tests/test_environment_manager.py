@@ -38,6 +38,11 @@ class EnvironmentManagerTests(unittest.TestCase):
         self.assertIn("ambertools=23", contents)
         self.assertIn("mdtraj<1.11", contents)
         self.assertIn("numpy>=1.26,<2", contents)
+        self.assertIn("gromacs=2026.3", contents)
+        self.assertEqual(
+            REQUIRED_PACKAGES["gromacs"],
+            "conda-forge::gromacs=2026.3",
+        )
         self.assertEqual(REQUIRED_PACKAGES["mdtraj"], "conda-forge::mdtraj<1.11")
         self.assertEqual(
             REQUIRED_PACKAGES["numpy"],
@@ -74,6 +79,18 @@ class EnvironmentManagerTests(unittest.TestCase):
         self.assertTrue(installed)
         self.assertEqual(run.call_args.kwargs["env_name"], "moldynstudio")
         self.assertIn("MDAnalysis", run.call_args.args[0][-1])
+
+    def test_gromacs_dependency_requires_a_callable_binary(self):
+        capabilities = mock.Mock(executable_ok=True)
+        with mock.patch.object(
+            environment_manager,
+            "probe_gromacs",
+            return_value=capabilities,
+        ) as probe:
+            installed = DependencyChecker(env_name="research").is_installed("gromacs")
+
+        self.assertTrue(installed)
+        probe.assert_called_once_with("gmx", "research")
 
     def test_install_missing_uses_bridge_without_shell(self):
         completed = CompletedProcess(args=[], returncode=0, stdout="", stderr="")

@@ -29,6 +29,8 @@ from PyQt5.QtWidgets import (
 )
 
 from core import wsl_bridge
+from core.gromacs_capabilities import probe_gromacs, resolve_gromacs_binary
+from core.settings import SettingsStore
 
 
 def _resource_root() -> Path:
@@ -189,8 +191,13 @@ class _StatusRow(QWidget):
 class SetupWizard(QDialog):
     """Single-page launcher: status dashboard + Begin button."""
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        settings: SettingsStore | None = None,
+    ):
         super().__init__(parent)
+        self.settings = settings or SettingsStore()
         self.setWindowTitle("MolDynStudio - Launcher")
         self.setMinimumSize(720, 520)
 
@@ -305,13 +312,31 @@ class SetupWizard(QDialog):
         if not getattr(self, "_env_ok_cached", False):
             self.row_gmx.set_busy("waiting for conda env")
             return
-        ok, msg = wsl_bridge.check_gmx()
-        if ok:
-            self.row_gmx.set_ok(msg)
-        else:
+        configured = str(self.settings.value("gromacs_binary", "auto"))
+        env_name = str(self.settings.value("conda_environment", "moldynstudio"))
+        try:
+            executable = resolve_gromacs_binary(configured)
+        except (FileNotFoundError, PermissionError, ValueError) as exc:
             self.row_gmx.set_missing(
-                msg, "Reinstall GROMACS", self._create_env
+                str(exc), "Reinstall GROMACS", self._create_env
             )
+            return
+
+        capabilities = probe_gromacs(executable, env_name)
+        if capabilities.executable_ok:
+            version = capabilities.version or "version not reported"
+            gpu = capabilities.gpu_support_text or "not reported"
+            self.row_gmx.set_ok(
+                f"{capabilities.executable} · GROMACS {version} · "
+                f"GPU support: {gpu}"
+            )
+            return
+        detail = capabilities.version_text[:200] or "unknown error"
+        self.row_gmx.set_missing(
+            f"{capabilities.executable} is not callable: {detail}",
+            "Reinstall GROMACS",
+            self._create_env,
+        )
 
     def _update_begin_state(self) -> None:
         all_ok = (
