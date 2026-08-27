@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from dataclasses import asdict
 from pathlib import Path
 from core.run_manifest import *
@@ -45,6 +46,28 @@ class RunManifestTests(unittest.TestCase):
             with self.assertRaises(RunManifestError): load_manifest(path)
             path.write_text("old", encoding="utf-8"); save_manifest(make_manifest(), path)
             self.assertEqual(load_manifest(path).protein_source, "protein.pdb")
+
+    def test_corrupt_nested_records_are_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "manifest.json"
+            for mutate in (
+                lambda x: x["stages"]["preparation"].update(inputs=[]),
+                lambda x: x["stages"]["preparation"].update(outputs={"x": 3}),
+                lambda x: x["stages"]["preparation"].update(commands=["bad"]),
+                lambda x: x["stages"]["preparation"].update(commands=[{"stage": "npt", "argv": [], "cwd": "p", "started_at": "t"}]),
+                lambda x: x.update(requested_cores="4"),
+            ):
+                data = asdict(make_manifest()); mutate(data)
+                path.write_text(json.dumps(data), encoding="utf-8")
+                with self.assertRaises(RunManifestError): load_manifest(path)
+
+    def test_atomic_failure_preserves_existing_destination(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "manifest.json"
+            path.write_text("old-content", encoding="utf-8")
+            with patch("core.run_manifest.os.replace", side_effect=OSError("simulated crash")):
+                with self.assertRaises(RunManifestError): save_manifest(make_manifest(), path)
+            self.assertEqual(path.read_text(encoding="utf-8"), "old-content")
 
     def test_manifest_path(self):
         self.assertEqual(manifest_path("project"), Path("project") / MANIFEST_FILENAME)

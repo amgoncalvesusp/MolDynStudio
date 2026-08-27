@@ -132,6 +132,11 @@ def load_manifest(path: str | Path) -> RunManifest:
         values = {key: data[key] for key in _REQUIRED - {"stages"}}
         if not isinstance(values["metadata"], dict) or not isinstance(data["requested_cores"], int) or isinstance(data["requested_cores"], bool):
             raise RunManifestError("manifest metadata or requested_cores is invalid")
+        for key in ("schema_version", "project_dir", "system_kind", "protein_source", "force_field", "water_model", "gromacs_binary", "conda_environment", "gpu_mode", "created_at", "updated_at"):
+            if not isinstance(data[key], str):
+                raise RunManifestError(f"manifest field {key!r} must be a string")
+        if data["ligand_source"] is not None and not isinstance(data["ligand_source"], str):
+            raise RunManifestError("ligand_source must be a string or null")
         return RunManifest(stages=stages, **values)
     except RunManifestError:
         raise
@@ -147,7 +152,29 @@ def _stage_record(key: str, value: Any) -> StageRecord:
         commands = value.get("commands", [])
         if not isinstance(commands, list):
             raise ValueError("commands must be a list")
-        parsed = [CommandRecord(**command) for command in commands]
+        parsed = []
+        for command in commands:
+            if not isinstance(command, dict):
+                raise ValueError("command must be an object")
+            if command.get("stage") != key:
+                raise ValueError("command stage does not match its stage record")
+            if not isinstance(command.get("argv"), list) or not all(isinstance(arg, str) for arg in command["argv"]):
+                raise ValueError("command argv must be a list of strings")
+            if not isinstance(command.get("cwd"), str) or not isinstance(command.get("started_at"), str):
+                raise ValueError("command cwd and started_at must be strings")
+            if command.get("finished_at") is not None and not isinstance(command["finished_at"], str):
+                raise ValueError("command finished_at must be a string or null")
+            if command.get("exit_code") is not None and (isinstance(command["exit_code"], bool) or not isinstance(command["exit_code"], int)):
+                raise ValueError("command exit_code must be an integer or null")
+            if command.get("success") is not None and not isinstance(command["success"], bool):
+                raise ValueError("command success must be boolean or null")
+            parsed.append(CommandRecord(**command))
+        for field_name in ("started_at", "finished_at", "message"):
+            if field_name in value and value[field_name] is not None and not isinstance(value[field_name], str):
+                raise ValueError(f"stage {field_name} must be a string or null")
+        for field_name in ("inputs", "outputs"):
+            if not isinstance(value.get(field_name, {}), dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in value[field_name].items()):
+                raise ValueError(f"stage {field_name} must be a string mapping")
         return StageRecord(**{**value, "commands": parsed})
     except (TypeError, ValueError) as exc:
         raise RunManifestError(f"invalid stage record for {key!r}") from exc
