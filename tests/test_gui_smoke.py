@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from pathlib import Path
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -72,6 +73,40 @@ class MainWindowSmokeTests(unittest.TestCase):
         window.switch_to_page("MD Run")
 
         self.assertIn("Project: No project loaded", run_page.preview_text())
+
+    def test_toolbar_run_action_starts_only_the_md_run_page(self):
+        window = studio.MainWindow()
+        self.addCleanup(window.close)
+        run_page = window.pages["MD Run"]
+
+        self.assertEqual(window.run_btn.text(), "Run unavailable")
+        self.assertFalse(window.run_btn.isEnabled())
+
+        window.switch_to_page("MD Run")
+
+        self.assertEqual(window.run_btn.text(), "Start MD run")
+        self.assertTrue(window.run_btn.isEnabled())
+        with mock.patch.object(run_page, "start_run") as start_run:
+            window.run_btn.click()
+        start_run.assert_called_once_with()
+
+        window.switch_to_page("Analysis")
+
+        self.assertEqual(window.run_btn.text(), "Run unavailable")
+        self.assertFalse(window.run_btn.isEnabled())
+
+    def test_production_source_has_no_toolbar_mock_execution(self):
+        source_path = Path(studio.__file__)
+        source = source_path.read_text(encoding="utf-8")
+
+        for forbidden in (
+            "run_mock_bundle",
+            "_advance_progress",
+            "Mock execution step reached",
+            "Prototype run completed",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)
 
 
 if __name__ == "__main__":

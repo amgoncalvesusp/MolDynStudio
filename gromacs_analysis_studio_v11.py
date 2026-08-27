@@ -937,8 +937,6 @@ class MainWindow(QMainWindow):
         self._project_context_was_cleared = False
         self.project_manager = ProjectManager()
         self.settings = SettingsStore()
-        self._progress_value = 0
-        self._timer: Optional[QTimer] = None
         self._autosave_timer = QTimer(self)
         self._autosave_timer.timeout.connect(self.autosave_session)
 
@@ -1181,9 +1179,10 @@ class MainWindow(QMainWindow):
         preview_btn.clicked.connect(self.preview_current_page)
         toolbar.addWidget(preview_btn)
 
-        run_btn = QPushButton("Run selected analyses")
-        run_btn.clicked.connect(self.run_mock_bundle)
-        toolbar.addWidget(run_btn)
+        self.run_btn = QPushButton("Run unavailable")
+        self.run_btn.setEnabled(False)
+        self.run_btn.clicked.connect(self._run_current_page)
+        toolbar.addWidget(self.run_btn)
 
         prefs_btn = QPushButton("Preferences")
         prefs_btn.clicked.connect(self.open_preferences)
@@ -1205,6 +1204,9 @@ class MainWindow(QMainWindow):
             return
         self.stack.setCurrentIndex(index)
         name = NAV_ITEMS[index]
+        can_start_md = name == "MD Run"
+        self.run_btn.setText("Start MD run" if can_start_md else "Run unavailable")
+        self.run_btn.setEnabled(can_start_md)
         if name == "MD Run":
             run_page = self.pages.get("MD Run")
             if isinstance(run_page, MDRunTab):
@@ -1276,6 +1278,13 @@ class MainWindow(QMainWindow):
 
     def preview_current_page(self):
         self.show_preview(self.current_page().preview_text())
+
+    def _run_current_page(self) -> None:
+        if NAV_ITEMS[self.nav.currentRow()] != "MD Run":
+            return
+        run_page = self.pages.get("MD Run")
+        if isinstance(run_page, MDRunTab):
+            run_page.start_run()
 
     def session_data(self) -> Dict:
         data = {
@@ -1437,30 +1446,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Auto-saved project to {target}", 5000)
         except Exception as exc:
             self.statusBar().showMessage(f"Auto-save failed: {exc}", 5000)
-
-    def run_mock_bundle(self):
-        self.append_log("Preparing a mock run for the currently selected analyses...")
-        self.progress.setValue(0)
-        self._progress_value = 0
-        if self._timer is not None:
-            self._timer.stop()
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._advance_progress)
-        self._timer.start(120)
-
-    def _advance_progress(self):
-        self._progress_value += 8
-        self.progress.setValue(self._progress_value)
-        if self._progress_value in {16, 40, 72}:
-            self.append_log(f"Mock execution step reached {self._progress_value}%.")
-        if self._progress_value >= 100:
-            if self._timer is not None:
-                self._timer.stop()
-            self.progress.setValue(100)
-            self.append_log(
-                "Prototype run completed. No external commands were executed; this build is for UI and session testing."
-            )
-
 
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
