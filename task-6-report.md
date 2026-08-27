@@ -3,6 +3,7 @@
 Implemented ACPYPE artifact discovery and normalization in `utils/topology_builder.py`.
 
 - Added strict `[ moleculetype ]` parsing via `read_molecule_name_from_itp`.
+  The record must contain exactly `name nrexcl`, with a non-negative integer `nrexcl`.
 - Added immutable `LigandTopologyArtifacts` contract.
 - Added content/pattern-based ACPYPE output discovery and canonical copies under `project/ligand/`.
 - Position restraints are copied only when a valid restraint section is present.
@@ -11,5 +12,5 @@ Implemented ACPYPE artifact discovery and normalization in `utils/topology_build
 
 Validation:
 
-- `python -m unittest tests.test_topology_builder tests.test_complex_builder -v` — passed (9 tests).
+- `python -m unittest tests.test_topology_builder tests.test_complex_builder -v` — passed (12 tests).
 - Full test discovery has 2 pre-existing failures in `tests/test_md_run_tab.py` concerning `start_mock_run`; no Task 6 files are involved.

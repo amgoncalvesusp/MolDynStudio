@@ -7,6 +7,8 @@ from pathlib import Path
 from utils.topology_builder import (
     AcpypeOutputError,
     LigandTopologyArtifacts,
+    LigandParamWorker,
+    LigandParams,
     UnsupportedLigandChemistryError,
     normalize_acpype_outputs,
     read_molecule_name_from_itp,
@@ -27,6 +29,44 @@ class TopologyBuilderTests(unittest.TestCase):
             path.write_text("[ moleculetype ]\nLIG 3\n[ moleculetype ]\nOTHER 3\n", encoding="utf-8")
             with self.assertRaises(AcpypeOutputError):
                 read_molecule_name_from_itp(path)
+
+    def test_molecule_type_requires_name_and_nonnegative_nrexcl(self):
+        invalid_records = ("LIG", "LIG nope", "LIG -1", "LIG 3 extra")
+        with tempfile.TemporaryDirectory() as tmp:
+            for index, record in enumerate(invalid_records):
+                path = Path(tmp) / f"bad{index}.itp"
+                path.write_text(f"[ moleculetype ]\n{record}\n", encoding="utf-8")
+                with self.assertRaises(AcpypeOutputError):
+                    read_molecule_name_from_itp(path)
+
+    def test_worker_emits_structured_artifacts_and_legacy_done(self):
+        class Signal:
+            def __init__(self): self.values = []
+            def emit(self, *values): self.values.append(values)
+            def connect(self, *_args): return None
+
+        class Proc:
+            stdout = iter(("ACPYPE output",))
+            def wait(self): return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "input.mol2"
+            source.write_text("@<TRIPOS>MOLECULE\nX\n", encoding="utf-8")
+            output = root / "x.acpype"
+            output.mkdir()
+            (output / "x_GMX.itp").write_text("[ moleculetype ]\nX 3\n", encoding="utf-8")
+            (output / "x_GMX.gro").write_text("X\n1\natom\n1 1 1\n", encoding="utf-8")
+            worker = LigandParamWorker(LigandParams(str(source), str(root)))
+            worker.done = Signal()
+            worker.artifacts_ready = Signal()
+            worker.log = Signal()
+            from unittest.mock import patch
+            with patch("utils.topology_builder.wsl_bridge.popen", return_value=Proc()), \
+                 patch("utils.topology_builder.wsl_bridge.win_to_wsl", return_value="/mnt/input.mol2"):
+                worker.run()
+            self.assertIsInstance(worker.artifacts_ready.values[0][0], LigandTopologyArtifacts)
+            self.assertEqual(worker.done.values, [(True, "Ligand topology generated.")])
 
     def test_normalizes_acpype_outputs_by_content(self):
         with tempfile.TemporaryDirectory() as tmp:

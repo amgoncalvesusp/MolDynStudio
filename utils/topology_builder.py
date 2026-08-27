@@ -99,9 +99,25 @@ def read_molecule_name_from_itp(path: str | Path) -> str:
             continue
         if section:
             fields = line.split()
-            if fields:
-                names.append(fields[0])
-                section = False
+            # ACPYPE/GROMACS requires exactly ``name nrexcl`` here.  Being
+            # strict prevents accidentally treating an arbitrary ITP as the
+            # ligand topology.
+            if len(fields) != 2 or not fields[0]:
+                raise AcpypeOutputError(
+                    f"Invalid [ moleculetype ] record in ITP: {path}"
+                )
+            try:
+                nrexcl = int(fields[1])
+            except ValueError as exc:
+                raise AcpypeOutputError(
+                    f"Invalid [ moleculetype ] nrexcl in ITP: {path}"
+                ) from exc
+            if nrexcl < 0:
+                raise AcpypeOutputError(
+                    f"Invalid [ moleculetype ] nrexcl in ITP: {path}"
+                )
+            names.append(fields[0])
+            section = False
     unique = list(dict.fromkeys(names))
     if len(unique) != 1 or len(names) != 1:
         raise AcpypeOutputError(f"ITP must contain one clear [ moleculetype ]: {path}")
