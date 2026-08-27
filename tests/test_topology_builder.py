@@ -5,12 +5,50 @@ import unittest
 from pathlib import Path
 
 from utils.topology_builder import (
+    AcpypeOutputError,
+    LigandTopologyArtifacts,
     UnsupportedLigandChemistryError,
+    normalize_acpype_outputs,
+    read_molecule_name_from_itp,
     validate_acpype_input,
 )
 
 
 class TopologyBuilderTests(unittest.TestCase):
+    def test_reads_strict_molecule_type(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.itp"
+            path.write_text("[ moleculetype ]\n; name nrexcl\nLIG 3\n", encoding="utf-8")
+            self.assertEqual(read_molecule_name_from_itp(path), "LIG")
+
+    def test_rejects_ambiguous_molecule_types(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.itp"
+            path.write_text("[ moleculetype ]\nLIG 3\n[ moleculetype ]\nOTHER 3\n", encoding="utf-8")
+            with self.assertRaises(AcpypeOutputError):
+                read_molecule_name_from_itp(path)
+
+    def test_normalizes_acpype_outputs_by_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, project = Path(tmp) / "random.acpype", Path(tmp) / "project"
+            root.mkdir()
+            (root / "foo_GMX.itp").write_text("[ moleculetype ]\nFOO 3\n", encoding="utf-8")
+            (root / "foo_GMX.gro").write_text("FOO\n1\n    1FOO C1 1 0 0 0\n1.0 1.0 1.0\n", encoding="utf-8")
+            (root / "foo_GMX_posre.itp").write_text("[ position_restraints ]\n1 1 1000 1000 1000\n", encoding="utf-8")
+            artifacts = normalize_acpype_outputs(root, project)
+            self.assertIsInstance(artifacts, LigandTopologyArtifacts)
+            self.assertEqual(artifacts.ligand_itp, project / "ligand" / "ligand.itp")
+            self.assertTrue(artifacts.ligand_gro.exists())
+            self.assertTrue(artifacts.ligand_posre_itp.exists())
+
+    def test_normalization_omits_optional_posre(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, project = Path(tmp) / "x", Path(tmp) / "p"
+            root.mkdir()
+            (root / "x.itp").write_text("[ moleculetype ]\nX 3\n", encoding="utf-8")
+            (root / "x.gro").write_text("X\n1\natom\n1 1 1\n", encoding="utf-8")
+            result = normalize_acpype_outputs(root, project)
+            self.assertIsNone(result.ligand_posre_itp)
     def test_rejects_boron_in_sdf_before_running_acpype(self):
         sdf = """C6S
   MolDynStudio

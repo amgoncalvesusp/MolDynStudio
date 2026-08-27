@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
+import re
+import shutil
 
 try:
     from PyQt5.QtCore import QThread, pyqtSignal
@@ -56,6 +58,123 @@ TWO_LETTER_ELEMENTS = frozenset(
 
 class UnsupportedLigandChemistryError(ValueError):
     """Raised when ACPYPE/GAFF2 cannot represent the supplied chemistry."""
+
+
+class AcpypeOutputError(ValueError):
+    """Raised when ACPYPE did not produce a usable ligand topology."""
+
+
+@dataclass(frozen=True)
+class LigandTopologyArtifacts:
+    """Canonical ligand files produced by ACPYPE."""
+
+    ligand_gro: Path
+    ligand_itp: Path
+    ligand_posre_itp: Path | None = None
+
+    @property
+    def gro(self) -> Path:
+        return self.ligand_gro
+
+    @property
+    def itp(self) -> Path:
+        return self.ligand_itp
+
+    @property
+    def posre(self) -> Path | None:
+        return self.ligand_posre_itp
+
+
+def read_molecule_name_from_itp(path: str | Path) -> str:
+    """Read the sole molecule name declared in an ITP ``[ moleculetype ]``."""
+
+    section = False
+    names: list[str] = []
+    for raw in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.split(";", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower() == "moleculetype"
+            continue
+        if section:
+            fields = line.split()
+            if fields:
+                names.append(fields[0])
+                section = False
+    unique = list(dict.fromkeys(names))
+    if len(unique) != 1 or len(names) != 1:
+        raise AcpypeOutputError(f"ITP must contain one clear [ moleculetype ]: {path}")
+    return unique[0]
+
+
+def _is_posre(path: Path) -> bool:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return bool(re.search(r"(?im)^\s*\[\s*position_restraints\s*\]", text))
+
+
+def _is_gro(path: Path) -> bool:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return len(lines) >= 3 and bool(re.match(r"^\s*\d+\s*$", lines[1]))
+    except OSError:
+        return False
+
+
+def normalize_acpype_outputs(acpype_dir: str | Path, project_dir: str | Path) -> LigandTopologyArtifacts:
+    """Find ACPYPE outputs by content and copy them to ``project/ligand``."""
+
+    source = Path(acpype_dir)
+    if not source.is_dir():
+        raise AcpypeOutputError(f"ACPYPE output directory does not exist: {source}")
+    destination = Path(project_dir) / "ligand"
+    destination_resolved = destination.resolve()
+
+    def in_destination(path: Path) -> bool:
+        try:
+            path.resolve().relative_to(destination_resolved)
+            return True
+        except ValueError:
+            return False
+
+    itps: list[tuple[Path, str]] = []
+    for candidate in source.rglob("*.itp"):
+        if in_destination(candidate):
+            continue
+        if _is_posre(candidate):
+            continue
+        try:
+            itps.append((candidate, read_molecule_name_from_itp(candidate)))
+        except (OSError, AcpypeOutputError):
+            continue
+    if len(itps) != 1:
+        raise AcpypeOutputError("Expected exactly one ligand topology ITP in ACPYPE outputs")
+    itp = itps[0][0]
+    gros = [p for p in source.rglob("*.gro") if not in_destination(p) and _is_gro(p)]
+    if not gros:
+        raise AcpypeOutputError("ACPYPE outputs do not contain a valid GRO structure")
+    # ACPYPE's *_GMX.gro is preferred; otherwise a single valid GRO is required.
+    preferred = [p for p in gros if "_gmx" in p.stem.lower()]
+    if len(preferred) == 1:
+        gro = preferred[0]
+    elif len(gros) == 1:
+        gro = gros[0]
+    else:
+        raise AcpypeOutputError("Could not identify one unambiguous ACPYPE GRO structure")
+    posres = [p for p in source.rglob("*.itp") if not in_destination(p) and _is_posre(p)]
+    if len(posres) > 1:
+        raise AcpypeOutputError("Multiple position-restraint ITP files found")
+    destination.mkdir(parents=True, exist_ok=True)
+    out_gro = destination / "ligand.gro"
+    out_itp = destination / "ligand.itp"
+    shutil.copyfile(gro, out_gro)
+    shutil.copyfile(itp, out_itp)
+    out_posre = destination / "ligand_posre.itp" if posres else None
+    if posres:
+        shutil.copyfile(posres[0], out_posre)
+    elif (destination / "ligand_posre.itp").exists():
+        (destination / "ligand_posre.itp").unlink()
+    return LigandTopologyArtifacts(out_gro, out_itp, out_posre)
 
 
 def _normalize_element(value: str) -> str:
@@ -184,6 +303,7 @@ class LigandParamWorker(QThread):
 
     log = pyqtSignal(str)
     done = pyqtSignal(bool, str)
+    artifacts_ready = pyqtSignal(object)
 
     def __init__(self, params: LigandParams, parent=None):
         super().__init__(parent)
@@ -224,6 +344,12 @@ class LigandParamWorker(QThread):
         finally:
             rc = proc.wait()
         if rc == 0:
+            try:
+                artifacts = normalize_acpype_outputs(p.work_dir, p.work_dir)
+            except (OSError, AcpypeOutputError) as exc:
+                self.done.emit(False, f"ACPYPE completed but normalization failed: {exc}")
+                return
+            self.artifacts_ready.emit(artifacts)
             self.done.emit(True, "Ligand topology generated.")
         else:
             self.done.emit(False, f"ACPYPE exited with status {rc}. See log above.")
