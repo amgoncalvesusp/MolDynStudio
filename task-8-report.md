@@ -18,15 +18,19 @@ Implemented a deterministic `PreparationOrchestrator` service and a thin
 - The run manifest records exact artifact paths and command results, persists
   preparation as `RUNNING`/`FAILED`/`COMPLETED`, and marks minimization `READY`
   only after successful validation.
+- Starting or failing a preparation rerun invalidates every downstream stage:
+  minimization, NVT, NPT, and production return to `NOT_READY`, with obsolete
+  timestamps, commands, inputs, and outputs removed. Only a newly validated
+  preparation can make minimization `READY` again.
 - `MDSetupTab` now starts exactly one `PreparationWorker`; it no longer starts
   independent system-preparation and ligand-parameterization workers.
 - The legacy `SystemPrepWorker` API remains as a compatibility wrapper.
 
 Validation:
 
-- `python -m unittest tests.test_system_prep tests.test_md_setup_tab tests.test_preparation_orchestrator -v` — passed (23 tests).
+- `python -m unittest tests.test_system_prep tests.test_md_setup_tab tests.test_preparation_orchestrator -v` — passed (24 tests).
 - Focused coverage — 89% total; `core/preparation_orchestrator.py` 84%,
   `core/system_prep.py` 97%, and `tabs/md_setup_tab.py` 92%.
-- Full discovery ran 152 tests: 150 passed. The 2 pre-existing failures are in
+- Full discovery ran 153 tests: 151 passed. The 2 pre-existing failures are in
   `tests/test_md_run_tab.py` and concern the unrelated `start_mock_run` mock
   pipeline; the same failures are documented in the Task 6 and Task 7 reports.

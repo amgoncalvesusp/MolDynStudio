@@ -441,17 +441,15 @@ class PreparationOrchestrator:
             inputs=inputs,
             outputs={},
         )
-        minimization = replace(
-            manifest.stages[StageName.MINIMIZATION.value],
-            status=StageStatus.NOT_READY.value,
-            message="Waiting for preparation to complete.",
+        reset_stages = self._reset_downstream_stages(
+            manifest.stages,
+            "Waiting for the current preparation to complete.",
         )
         self._manifest = replace(
             manifest,
             stages={
-                **manifest.stages,
+                **reset_stages,
                 StageName.PREPARATION.value: prep,
-                StageName.MINIMIZATION.value: minimization,
             },
             updated_at=now,
         )
@@ -470,15 +468,42 @@ class PreparationOrchestrator:
                 message=message,
             ),
         )
-        self._replace_stage(
-            StageName.MINIMIZATION,
-            lambda stage: replace(
-                stage,
-                status=StageStatus.NOT_READY.value,
-                message="Preparation failed.",
+        assert self._manifest is not None
+        self._manifest = replace(
+            self._manifest,
+            stages=self._reset_downstream_stages(
+                self._manifest.stages,
+                "Preparation failed; this stage is not ready.",
             ),
+            updated_at=utc_now_iso(),
         )
         self._save()
+
+    @staticmethod
+    def _reset_downstream_stages(
+        stages: dict[str, StageRecord],
+        message: str,
+    ) -> dict[str, StageRecord]:
+        """Return stages with every artifact-dependent stage invalidated."""
+
+        reset = dict(stages)
+        for stage_name in (
+            StageName.MINIMIZATION,
+            StageName.NVT,
+            StageName.NPT,
+            StageName.PRODUCTION,
+        ):
+            reset[stage_name.value] = replace(
+                stages[stage_name.value],
+                status=StageStatus.NOT_READY.value,
+                started_at=None,
+                finished_at=None,
+                message=message,
+                commands=[],
+                inputs={},
+                outputs={},
+            )
+        return reset
 
     def _replace_stage(
         self,

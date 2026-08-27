@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from core.preparation_orchestrator import (
@@ -11,7 +12,14 @@ from core.preparation_orchestrator import (
     PreparationOrchestrator,
     PreparationRequest,
 )
-from core.run_manifest import StageStatus, load_manifest
+from core.run_manifest import (
+    CommandRecord,
+    StageName,
+    StageStatus,
+    load_manifest,
+    new_manifest,
+    save_manifest,
+)
 from core.system_prep import SystemPrepParams
 from utils.mdp_generator import MDParameters
 from utils.topology_builder import LigandTopologyArtifacts
@@ -203,6 +211,89 @@ class PreparationOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(command.argv[:2], ("custom-gmx", "genion"))
         self.assertEqual(command.conda_environment, "custom-env")
+
+    def test_rerun_failure_invalidates_every_completed_downstream_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rerun_request = request(root)
+            manifest = new_manifest(
+                root,
+                "protein",
+                rerun_request.system.pdb_path,
+                None,
+                rerun_request.system.force_field,
+                rerun_request.system.water_model,
+                rerun_request.gromacs_binary,
+                rerun_request.conda_environment,
+                rerun_request.requested_cores,
+                rerun_request.gpu_mode,
+            )
+            old_command = CommandRecord(
+                "production", ["old-gmx", "mdrun"], str(root), "old-start"
+            )
+            for stage_name in (
+                StageName.MINIMIZATION,
+                StageName.NVT,
+                StageName.NPT,
+                StageName.PRODUCTION,
+            ):
+                stage = manifest.stages[stage_name.value]
+                command = replace(old_command, stage=stage_name.value)
+                manifest.stages[stage_name.value] = replace(
+                    stage,
+                    status=StageStatus.COMPLETED.value,
+                    started_at="old-start",
+                    finished_at="old-finish",
+                    message="Old run completed.",
+                    commands=[command],
+                    inputs={"old-input": "obsolete.gro"},
+                    outputs={"old-output": "obsolete.cpt"},
+                )
+            save_manifest(manifest, root / "moldynstudio_run.json")
+
+            running_snapshot = []
+
+            class SnapshotRunner(MaterializingRunner):
+                def run(self, command, on_output=None):
+                    if not running_snapshot:
+                        running_snapshot.append(
+                            load_manifest(root / "moldynstudio_run.json")
+                        )
+                    return super().run(command, on_output)
+
+            service = PreparationOrchestrator(
+                rerun_request,
+                runner=SnapshotRunner(fail_on="solvate"),
+                structure_validator=lambda _path: None,
+            )
+
+            with self.assertRaises(PreparationError):
+                service.run()
+
+            self.assertEqual(
+                running_snapshot[0].stages["preparation"].status,
+                StageStatus.RUNNING.value,
+            )
+            failed_manifest = load_manifest(root / "moldynstudio_run.json")
+            self.assertEqual(
+                failed_manifest.stages["preparation"].status,
+                StageStatus.FAILED.value,
+            )
+            for candidate in (running_snapshot[0], failed_manifest):
+                for stage_name in (
+                    StageName.MINIMIZATION,
+                    StageName.NVT,
+                    StageName.NPT,
+                    StageName.PRODUCTION,
+                ):
+                    stage = candidate.stages[stage_name.value]
+                    self.assertEqual(stage.status, StageStatus.NOT_READY.value)
+                    self.assertIsNone(stage.started_at)
+                    self.assertIsNone(stage.finished_at)
+                    self.assertEqual(stage.commands, [])
+                    self.assertEqual(stage.inputs, {})
+                    self.assertEqual(stage.outputs, {})
+                    self.assertIn("preparation", stage.message.lower())
 
 
 if __name__ == "__main__":
