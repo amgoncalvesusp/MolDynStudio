@@ -328,10 +328,12 @@ class MDRunTabTests(unittest.TestCase):
             runner = created[0]
             runner.stage_changed.emit("nvt", "running", "NVT is running.")
             runner.log_line.emit("Step 2500  Time 5.000")
-            runner.finished_with_status.emit(True, "done")
 
             self.assertEqual(tab.stage_widgets[StageName.NVT].status.text(), "Running")
             self.assertIn("[GROMACS] Step 2500  Time 5.000", tab.log.toPlainText())
+
+            runner.finished_with_status.emit(True, "done")
+
             self.assertIn("[MolDynStudio] done", tab.log.toPlainText())
 
     def test_stop_button_delegates_to_active_runner(self):
@@ -435,6 +437,46 @@ class MDRunTabTests(unittest.TestCase):
 
             self.assertTrue(tab.run_button.isEnabled())
             self.assertTrue(tab.resume_selector.isEnabled())
+
+    def test_runner_finish_reloads_manifest_state_and_resume_points(self):
+        created = []
+
+        def factory(manifest_file, stages, capabilities, *, resume=False):
+            runner = FakeRunner(
+                manifest_file,
+                stages,
+                capabilities,
+                resume=resume,
+            )
+            created.append(runner)
+            return runner
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _manifest(root)
+            (root / "em.gro").write_text(GRO_TEXT, encoding="utf-8")
+            tab = MDRunTab(
+                runner_factory=factory,
+                capability_probe=lambda _exe, _env: _capabilities(),
+                artifact_validators=_validators(),
+            )
+            self.addCleanup(tab.deleteLater)
+            tab.load_project(str(root))
+            tab.run_button.click()
+
+            _set_stage_status(
+                root,
+                StageName.MINIMIZATION,
+                StageStatus.COMPLETED,
+                {"em.gro": str((root / "em.gro").resolve())},
+            )
+            created[0].finished_with_status.emit(True, "done")
+
+            self.assertEqual(
+                tab.stage_widgets[StageName.MINIMIZATION].status.text(),
+                "Completed",
+            )
+            self.assertTrue(tab.resume_selector.model().item(1).isEnabled())
 
     def test_plots_remain_empty_until_real_parser_values_arrive(self):
         created = []

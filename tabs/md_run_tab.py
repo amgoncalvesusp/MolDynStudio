@@ -626,13 +626,12 @@ class MDRunTab(MolDynBasePage):
         self._active = False
         self._active_stage = None
         self._append_ui_message(message)
-        self._preparation_valid = (
-            self._validate_preparation(self._manifest)
-            if self._manifest is not None
-            else False
-        )
-        self._refresh_resume_options()
-        self._set_controls_active(False)
+        if self._project_dir is None or self._manifest_file is None:
+            self._preparation_valid = False
+            self._refresh_resume_options()
+            self._set_controls_active(False)
+            return
+        self.refresh_from_manifest()
 
     def _append_ui_message(self, message: str) -> None:
         self._append_log_line("[MolDynStudio] ", str(message))
