@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from pathlib import Path
 import threading
-from typing import Callable, Protocol, Sequence
+from typing import Callable, Mapping, Protocol, Sequence
 
 try:
     from PyQt5.QtCore import QThread, pyqtSignal
@@ -79,6 +79,12 @@ from core.run_manifest import (
     save_manifest,
     utc_now_iso,
 )
+from core.stage_qc import (
+    QCCheck,
+    QCSeverity,
+    StageQCResult,
+    evaluate_stage_qc,
+)
 
 
 StageCallback = Callable[[StageName, StageStatus, str], None]
@@ -87,6 +93,7 @@ FinishedCallback = Callable[[bool, str], None]
 Validator = Callable[[str | Path], ValidationResult]
 TopologyValidator = Callable[[str | Path, str | None], ValidationResult]
 MdpValidator = Callable[..., ValidationResult]
+StageQCEvaluator = Callable[[StageName, Mapping[str, str]], StageQCResult]
 
 
 class MDPipelineError(RuntimeError):
@@ -228,6 +235,7 @@ class MDPipelineService:
         *,
         command_runner: CommandRunnerService | None = None,
         validators: ArtifactValidators | None = None,
+        stage_qc_evaluator: StageQCEvaluator = evaluate_stage_qc,
         free_space_warning_bytes: int = DEFAULT_FREE_SPACE_WARNING_BYTES,
         on_stage_status: StageCallback | None = None,
         on_log: LogCallback | None = None,
@@ -238,6 +246,7 @@ class MDPipelineService:
         self.capabilities = capabilities
         self.command_runner = command_runner or GromacsCommandRunnerService()
         self.validators = validators or ArtifactValidators()
+        self.stage_qc_evaluator = stage_qc_evaluator
         self.free_space_warning_bytes = free_space_warning_bytes
         self.on_stage_status = on_stage_status or (lambda _name, _status, _message: None)
         self.on_log = on_log or (lambda _line: None)
@@ -316,6 +325,7 @@ class MDPipelineService:
 
     def _run_stage(self, stage: PipelineStage, *, run_preflight: bool = True) -> bool:
         self._active_stage = stage.name
+        self._clear_stage_qc(stage.name)
         if run_preflight:
             assert self._manifest is not None
             try:
@@ -386,10 +396,26 @@ class MDPipelineService:
                 return False
 
         outputs = self._stage_outputs(stage.name)
+        qc_result = self._evaluate_stage_qc(stage.name, outputs)
+        self._persist_stage_qc(qc_result)
+        for check in qc_result.warnings:
+            self.on_log(f"QC warning ({stage.name.value}): {check.message}")
+        for check in qc_result.fatals:
+            self.on_log(f"QC fatal ({stage.name.value}): {check.message}")
+        if qc_result.has_fatal:
+            details = "; ".join(check.message for check in qc_result.fatals)
+            self._fail_stage(stage.name, f"Post-stage QC failed: {details}")
+            return False
+
+        completion_message = (
+            f"{stage.name.value.title()} completed with QC warnings."
+            if qc_result.warnings
+            else f"{stage.name.value.title()} completed."
+        )
         self._transition(
             stage.name,
             StageStatus.COMPLETED,
-            f"{stage.name.value.title()} completed.",
+            completion_message,
             outputs=outputs,
         )
         self._mark_next_ready(stage.name)
@@ -468,6 +494,80 @@ class MDPipelineService:
             *(filename for filename, _kind in _REQUIRED_MDRUN_OUTPUTS[stage]),
         ]
         return {name: str((self._project_dir / name).resolve()) for name in filenames}
+
+    def _evaluate_stage_qc(
+        self,
+        stage: StageName,
+        outputs: Mapping[str, str],
+    ) -> StageQCResult:
+        try:
+            result = self.stage_qc_evaluator(stage, outputs)
+            if not isinstance(result, StageQCResult):
+                raise TypeError("evaluator returned an invalid result")
+            if result.stage != stage.value:
+                raise ValueError(
+                    f"evaluator returned stage {result.stage!r} for {stage.value!r}"
+                )
+            return result
+        except Exception as exc:
+            source = outputs.get(f"{_STAGE_STEMS[stage]}.log", "")
+            return StageQCResult(
+                stage.value,
+                (
+                    QCCheck(
+                        gate="stage_qc",
+                        severity=QCSeverity.WARNING,
+                        message=f"Post-stage diagnostics could not be evaluated: {exc}",
+                        source=source,
+                        observations={},
+                    ),
+                ),
+            )
+
+    def _clear_stage_qc(self, stage: StageName) -> None:
+        self._clear_stage_qc_entries((stage,))
+
+    def _clear_stage_qc_entries(self, stages: Sequence[StageName]) -> None:
+        assert self._manifest is not None
+        existing = self._manifest.metadata.get("stage_qc", {})
+        stage_names = frozenset(stage.value for stage in stages)
+        if not isinstance(existing, dict) or not stage_names.intersection(existing):
+            return
+        remaining = {
+            name: payload
+            for name, payload in existing.items()
+            if name not in stage_names
+        }
+        self._replace_metadata(
+            {
+                **self._manifest.metadata,
+                "stage_qc": remaining,
+            }
+        )
+
+    def _persist_stage_qc(self, result: StageQCResult) -> None:
+        assert self._manifest is not None
+        existing = self._manifest.metadata.get("stage_qc", {})
+        stage_qc = dict(existing) if isinstance(existing, dict) else {}
+        self._replace_metadata(
+            {
+                **self._manifest.metadata,
+                "stage_qc": {
+                    **stage_qc,
+                    result.stage: result.to_manifest(),
+                },
+            }
+        )
+
+    def _replace_metadata(self, metadata: dict[str, object]) -> None:
+        assert self._manifest is not None
+        with self._manifest_lock:
+            self._manifest = replace(
+                self._manifest,
+                metadata=metadata,
+                updated_at=utc_now_iso(),
+            )
+            save_manifest(self._manifest, self.manifest_file)
 
     def _start_command(self, stage: StageName, spec: CommandSpec) -> int:
         record = CommandRecord(
@@ -549,6 +649,7 @@ class MDPipelineService:
             start = _DYNAMICS_STAGES.index(stage) + 1
         except ValueError:
             return
+        self._clear_stage_qc_entries(_DYNAMICS_STAGES[start:])
         for downstream in _DYNAMICS_STAGES[start:]:
             current = self._stage_record(downstream)
             self._replace_stage(
@@ -571,6 +672,7 @@ class MDPipelineService:
             next_stage = _DYNAMICS_STAGES[_DYNAMICS_STAGES.index(stage) + 1]
         except (ValueError, IndexError):
             return
+        self._clear_stage_qc_entries((next_stage,))
         current = self._stage_record(next_stage)
         ready = replace(
             current,
@@ -627,6 +729,7 @@ class MDPipelineRunner(QThread):
         service: MDPipelineService | None = None,
         command_runner: CommandRunnerService | None = None,
         validators: ArtifactValidators | None = None,
+        stage_qc_evaluator: StageQCEvaluator = evaluate_stage_qc,
         free_space_warning_bytes: int = DEFAULT_FREE_SPACE_WARNING_BYTES,
         resume: bool = False,
         parent=None,
@@ -643,6 +746,7 @@ class MDPipelineRunner(QThread):
                 capabilities,
                 command_runner=command_runner,
                 validators=validators,
+                stage_qc_evaluator=stage_qc_evaluator,
                 free_space_warning_bytes=free_space_warning_bytes,
             )
         self.service = service

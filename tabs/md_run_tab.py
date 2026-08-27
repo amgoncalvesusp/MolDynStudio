@@ -132,6 +132,7 @@ class MDRunTab(MolDynBasePage):
         self._plot_values: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {}
         self._log_parser = GromacsLogParser()
         self._last_parsed_step: int | None = None
+        self._displayed_qc_messages: set[tuple[str, str, str]] = set()
 
         outer = QVBoxLayout(self)
         title = QLabel("MD Run")
@@ -233,6 +234,8 @@ class MDRunTab(MolDynBasePage):
                     "The project cannot be changed while an MD pipeline is active."
                 )
             return
+        if selected != self._project_dir:
+            self._displayed_qc_messages.clear()
         self._project_dir = selected
         self._manifest_file = (
             manifest_path(self._project_dir) if self._project_dir is not None else None
@@ -278,6 +281,7 @@ class MDRunTab(MolDynBasePage):
             except (KeyError, ValueError):
                 status = StageStatus.NOT_READY
             self._set_stage_status(stage, status)
+        self._show_persisted_qc(manifest)
 
         self._preparation_valid = self._validate_preparation(manifest)
         self._refresh_resume_options()
@@ -496,7 +500,9 @@ class MDRunTab(MolDynBasePage):
             and self._is_valid(self._artifact_validators.validate_tpr, root / "md.tpr")
             and self._is_valid(
                 self._artifact_validators.validate_checkpoint, root / "md.cpt"
-            ),
+            )
+            and self._is_valid(self._artifact_validators.validate_file, root / "md.log")
+            and self._is_valid(self._artifact_validators.validate_file, root / "md.edr"),
         )
         for index, enabled in enumerate(valid):
             self.resume_selector.model().item(index).setEnabled(enabled)
@@ -564,6 +570,38 @@ class MDRunTab(MolDynBasePage):
             widgets.progress.setValue(100 if status == StageStatus.COMPLETED else 0)
         widgets.status.setText(_STATUS_LABELS[status])
 
+    def _show_persisted_qc(self, manifest: RunManifest) -> None:
+        stage_qc = manifest.metadata.get("stage_qc", {})
+        if not isinstance(stage_qc, dict):
+            return
+        project_key = str(self._project_dir or "")
+        for stage in _DYNAMICS_STAGES:
+            payload = stage_qc.get(stage.value)
+            if not isinstance(payload, dict):
+                continue
+            outcome = payload.get("outcome")
+            if outcome == "warning" and self.stage_widgets[stage].status.text() == "Completed":
+                self.stage_widgets[stage].status.setText("Completed (QC warning)")
+            elif outcome == "fatal" and self.stage_widgets[stage].status.text() == "Failed":
+                self.stage_widgets[stage].status.setText("Failed (QC)")
+            checks = payload.get("checks", ())
+            if not isinstance(checks, list):
+                continue
+            for check in checks:
+                if not isinstance(check, dict) or check.get("severity") not in {
+                    "warning",
+                    "fatal",
+                }:
+                    continue
+                message = check.get("message")
+                if not isinstance(message, str) or not message.strip():
+                    continue
+                fingerprint = (project_key, stage.value, message)
+                if fingerprint in self._displayed_qc_messages:
+                    continue
+                self._displayed_qc_messages.add(fingerprint)
+                self._append_log_line("[QC] ", f"{_STAGE_LABELS[stage]}: {message}")
+
     def _on_stage_changed(self, stage_name: str, status_name: str, message: str) -> None:
         try:
             stage = StageName(stage_name)
@@ -575,6 +613,11 @@ class MDRunTab(MolDynBasePage):
             return
         if stage in self.stage_widgets:
             self._set_stage_status(stage, status)
+            normalized_message = message.casefold()
+            if status == StageStatus.COMPLETED and "qc warning" in normalized_message:
+                self.stage_widgets[stage].status.setText("Completed (QC warning)")
+            elif status == StageStatus.FAILED and "post-stage qc" in normalized_message:
+                self.stage_widgets[stage].status.setText("Failed (QC)")
         if status == StageStatus.RUNNING:
             self._active_stage = stage
             mdp_names = {
@@ -602,10 +645,31 @@ class MDRunTab(MolDynBasePage):
 
     def _on_gromacs_line(self, line: str) -> None:
         text = str(line)
+        if text.startswith("QC "):
+            qc_text = text[3:]
+            self._remember_live_qc_message(qc_text)
+            self._append_log_line("[QC] ", qc_text)
+            self.request_log.emit(text)
+            return
         self._append_log_line("[GROMACS] ", text)
         update = self._log_parser.feed_line(text)
         if update is not None:
             self._apply_parsed_progress(update)
+
+    def _remember_live_qc_message(self, text: str) -> None:
+        label, separator, message = text.partition(": ")
+        if not separator or not message:
+            return
+        opening = label.find("(")
+        if opening < 0 or not label.endswith(")"):
+            return
+        try:
+            stage = StageName(label[opening + 1 : -1])
+        except ValueError:
+            return
+        self._displayed_qc_messages.add(
+            (str(self._project_dir or ""), stage.value, message)
+        )
 
     def _apply_parsed_progress(self, update: MDProgress) -> None:
         if update.step is not None:

@@ -253,8 +253,30 @@ class MDRunTabTests(unittest.TestCase):
 
             (root / "md.tpr").write_text("tpr", encoding="utf-8")
             (root / "md.cpt").write_text("checkpoint", encoding="utf-8")
+            (root / "md.log").write_text("log", encoding="utf-8")
+            (root / "md.edr").write_text("energy", encoding="utf-8")
             _set_stage_status(root, StageName.PRODUCTION, StageStatus.INTERRUPTED)
             tab.refresh_from_manifest()
+            self.assertTrue(tab.resume_selector.model().item(4).isEnabled())
+
+    def test_production_checkpoint_requires_log_and_energy_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _manifest(root)
+            (root / "md.tpr").write_text("tpr", encoding="utf-8")
+            (root / "md.cpt").write_text("checkpoint", encoding="utf-8")
+            _set_stage_status(root, StageName.PRODUCTION, StageStatus.INTERRUPTED)
+            tab = MDRunTab(artifact_validators=_validators())
+            self.addCleanup(tab.deleteLater)
+
+            tab.load_project(str(root))
+
+            self.assertFalse(tab.resume_selector.model().item(4).isEnabled())
+
+            (root / "md.log").write_text("log", encoding="utf-8")
+            (root / "md.edr").write_text("energy", encoding="utf-8")
+            tab.refresh_from_manifest()
+
             self.assertTrue(tab.resume_selector.model().item(4).isEnabled())
 
     def test_resume_selector_requires_both_structure_and_checkpoint(self):
@@ -339,6 +361,141 @@ class MDRunTabTests(unittest.TestCase):
 
             self.assertIn("[MolDynStudio] done", tab.log.toPlainText())
 
+    def test_persisted_qc_warning_is_visible_in_stage_status_and_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            manifest = load_manifest(path)
+            minimization = replace(
+                manifest.stages[StageName.MINIMIZATION.value],
+                status=StageStatus.COMPLETED.value,
+            )
+            save_manifest(
+                replace(
+                    manifest,
+                    stages={
+                        **manifest.stages,
+                        StageName.MINIMIZATION.value: minimization,
+                    },
+                    metadata={
+                        **manifest.metadata,
+                        "stage_qc": {
+                            StageName.MINIMIZATION.value: {
+                                "stage": StageName.MINIMIZATION.value,
+                                "outcome": "warning",
+                                "checks": [
+                                    {
+                                        "gate": "pressure",
+                                        "severity": "warning",
+                                        "message": "Pressure magnitude is high.",
+                                        "source": str(root / "em.log"),
+                                        "observations": {"maximum": 5000.0},
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                ),
+                path,
+            )
+            tab = MDRunTab(artifact_validators=_validators())
+            self.addCleanup(tab.deleteLater)
+
+            tab.load_project(str(root))
+
+            self.assertEqual(
+                tab.stage_widgets[StageName.MINIMIZATION].status.text(),
+                "Completed (QC warning)",
+            )
+            self.assertIn("[QC] Minimization: Pressure magnitude is high.", tab.log.toPlainText())
+
+    def test_live_qc_warning_uses_qc_log_prefix_and_completed_warning_status(self):
+        created = []
+
+        def factory(manifest_file, stages, capabilities, *, resume=False):
+            runner = FakeRunner(
+                manifest_file,
+                stages,
+                capabilities,
+                resume=resume,
+            )
+            created.append(runner)
+            return runner
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _manifest(root)
+            tab = MDRunTab(
+                runner_factory=factory,
+                capability_probe=lambda _exe, _env: _capabilities(),
+                artifact_validators=_validators(),
+            )
+            self.addCleanup(tab.deleteLater)
+            tab.load_project(str(root))
+            tab.run_button.click()
+            runner = created[0]
+
+            runner.log_line.emit("QC warning (nvt): Pressure magnitude is high.")
+            runner.stage_changed.emit(
+                "nvt",
+                "completed",
+                "Nvt completed with QC warnings.",
+            )
+
+            self.assertIn(
+                "[QC] warning (nvt): Pressure magnitude is high.",
+                tab.log.toPlainText(),
+            )
+            self.assertNotIn(
+                "[GROMACS] QC warning (nvt)",
+                tab.log.toPlainText(),
+            )
+            self.assertEqual(
+                tab.stage_widgets[StageName.NVT].status.text(),
+                "Completed (QC warning)",
+            )
+            self.assertEqual(tab.stage_widgets[StageName.NVT].progress.value(), 100)
+
+            manifest_path = root / "moldynstudio_run.json"
+            manifest = load_manifest(manifest_path)
+            save_manifest(
+                replace(
+                    manifest,
+                    stages={
+                        **manifest.stages,
+                        StageName.NVT.value: replace(
+                            manifest.stages[StageName.NVT.value],
+                            status=StageStatus.COMPLETED.value,
+                        ),
+                    },
+                    metadata={
+                        **manifest.metadata,
+                        "stage_qc": {
+                            StageName.NVT.value: {
+                                "stage": StageName.NVT.value,
+                                "outcome": "warning",
+                                "checks": [
+                                    {
+                                        "gate": "pressure",
+                                        "severity": "warning",
+                                        "message": "Pressure magnitude is high.",
+                                        "source": str(root / "nvt.log"),
+                                        "observations": {},
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                ),
+                manifest_path,
+            )
+            runner.finished_with_status.emit(True, "done")
+
+            self.assertEqual(
+                tab.log.toPlainText().count("Pressure magnitude is high."),
+                1,
+            )
+
     def test_stop_button_delegates_to_active_runner(self):
         created = []
 
@@ -386,6 +543,8 @@ class MDRunTabTests(unittest.TestCase):
             _manifest(root)
             (root / "md.tpr").write_text("tpr", encoding="utf-8")
             (root / "md.cpt").write_text("checkpoint", encoding="utf-8")
+            (root / "md.log").write_text("log", encoding="utf-8")
+            (root / "md.edr").write_text("energy", encoding="utf-8")
             _set_stage_status(root, StageName.PRODUCTION, StageStatus.INTERRUPTED)
             tab = MDRunTab(
                 runner_factory=factory,

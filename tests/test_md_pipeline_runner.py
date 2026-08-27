@@ -26,6 +26,7 @@ from core.run_manifest import (
     new_manifest,
     save_manifest,
 )
+from core.stage_qc import QCCheck, QCSeverity, StageQCResult
 
 
 def _valid_gro() -> str:
@@ -537,6 +538,232 @@ class MDPipelineServiceTests(unittest.TestCase):
                         service.resume_production()
 
                     self.assertEqual(runner.commands, [])
+
+    def test_qc_runs_after_artifact_validation_and_is_persisted_before_completed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            validated: set[str] = set()
+            completed_payloads = []
+
+            def present(candidate: str | Path) -> ValidationResult:
+                artifact = Path(candidate)
+                if artifact.is_file():
+                    validated.add(artifact.name)
+                return ValidationResult(artifact.is_file(), f"checked {artifact.name}")
+
+            validators = ArtifactValidators(
+                validate_gro=present,
+                validate_tpr=present,
+                validate_checkpoint=present,
+                validate_file=present,
+            )
+
+            def evaluate(stage: StageName, outputs: dict[str, str]) -> StageQCResult:
+                required = {"em.gro", "em.edr", "em.log"}
+                self.assertTrue(required <= validated)
+                self.assertTrue(required <= outputs.keys())
+                self.assertEqual(
+                    load_manifest(path).stages[stage.value].status,
+                    StageStatus.RUNNING.value,
+                )
+                return StageQCResult(
+                    stage.value,
+                    (
+                        QCCheck(
+                            "temperature",
+                            QCSeverity.WARNING,
+                            "Temperature diagnostics are optional in minimization.",
+                            outputs["em.log"],
+                            {},
+                        ),
+                    ),
+                )
+
+            def on_status(
+                stage: StageName,
+                status: StageStatus,
+                _message: str,
+            ) -> None:
+                if status == StageStatus.COMPLETED:
+                    completed_payloads.append(
+                        load_manifest(path).metadata["stage_qc"][stage.value]
+                    )
+
+            service = MDPipelineService(
+                path,
+                build_pipeline(root, (StageName.MINIMIZATION,)),
+                _capabilities(),
+                command_runner=FakeCommandRunner(root),
+                validators=validators,
+                stage_qc_evaluator=evaluate,
+                on_stage_status=on_status,
+            )
+
+            self.assertTrue(service.run())
+
+            self.assertEqual(len(completed_payloads), 1)
+            self.assertEqual(completed_payloads[0]["outcome"], "warning")
+            stage = load_manifest(path).stages[StageName.MINIMIZATION.value]
+            self.assertEqual(stage.status, StageStatus.COMPLETED.value)
+            self.assertIn("QC warning", stage.message)
+
+    def test_artifact_failure_skips_qc_and_never_completes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            evaluations = []
+
+            def evaluate(stage, outputs):
+                evaluations.append((stage, outputs))
+                return StageQCResult(stage.value, ())
+
+            service = MDPipelineService(
+                path,
+                build_pipeline(root, (StageName.MINIMIZATION,)),
+                _capabilities(),
+                command_runner=FakeCommandRunner(root, omit="em.log"),
+                validators=_validators(),
+                stage_qc_evaluator=evaluate,
+            )
+
+            self.assertFalse(service.run())
+
+            manifest = load_manifest(path)
+            self.assertEqual(evaluations, [])
+            self.assertNotIn(
+                StageName.MINIMIZATION.value,
+                manifest.metadata.get("stage_qc", {}),
+            )
+            self.assertEqual(
+                manifest.stages[StageName.MINIMIZATION.value].status,
+                StageStatus.FAILED.value,
+            )
+
+    def test_qc_warning_logs_and_preserves_unrelated_manifest_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            manifest = load_manifest(path)
+            save_manifest(
+                replace(
+                    manifest,
+                    metadata={
+                        "owner": "scientist",
+                        "stage_qc": {
+                            "external": {"outcome": "passed", "checks": []}
+                        },
+                    },
+                ),
+                path,
+            )
+            logs = []
+
+            def evaluate(stage, outputs):
+                return StageQCResult(
+                    stage.value,
+                    (
+                        QCCheck(
+                            "pressure",
+                            QCSeverity.WARNING,
+                            "Pressure magnitude is high.",
+                            outputs["em.log"],
+                            {"maximum": 5000.0},
+                        ),
+                    ),
+                )
+
+            service = MDPipelineService(
+                path,
+                build_pipeline(root, (StageName.MINIMIZATION,)),
+                _capabilities(),
+                command_runner=FakeCommandRunner(root),
+                validators=_validators(),
+                stage_qc_evaluator=evaluate,
+                on_log=logs.append,
+            )
+
+            self.assertTrue(service.run())
+
+            persisted = load_manifest(path)
+            self.assertEqual(persisted.metadata["owner"], "scientist")
+            self.assertEqual(
+                persisted.metadata["stage_qc"]["external"]["outcome"],
+                "passed",
+            )
+            self.assertEqual(
+                persisted.metadata["stage_qc"]["minimization"]["outcome"],
+                "warning",
+            )
+            self.assertTrue(any(line.startswith("QC warning (minimization)") for line in logs))
+
+    def test_explicit_fatal_qc_fails_stage_and_invalidates_downstream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            manifest = load_manifest(path)
+            save_manifest(
+                replace(
+                    manifest,
+                    metadata={
+                        "stage_qc": {
+                            "nvt": {"outcome": "warning", "checks": []},
+                            "npt": {"outcome": "passed", "checks": []},
+                        }
+                    },
+                ),
+                path,
+            )
+            transitions = []
+
+            def evaluate(stage, outputs):
+                return StageQCResult(
+                    stage.value,
+                    (
+                        QCCheck(
+                            "temperature",
+                            QCSeverity.FATAL,
+                            "Required temperature diagnostics are malformed.",
+                            outputs["em.log"],
+                            {},
+                        ),
+                    ),
+                )
+
+            service = MDPipelineService(
+                path,
+                build_pipeline(root),
+                _capabilities(),
+                command_runner=FakeCommandRunner(root),
+                validators=_validators(),
+                stage_qc_evaluator=evaluate,
+                on_stage_status=lambda stage, status, _message: transitions.append(
+                    (stage, status)
+                ),
+            )
+
+            self.assertFalse(service.run())
+
+            manifest = load_manifest(path)
+            self.assertEqual(
+                manifest.metadata["stage_qc"]["minimization"]["outcome"],
+                "fatal",
+            )
+            self.assertNotIn("nvt", manifest.metadata["stage_qc"])
+            self.assertNotIn("npt", manifest.metadata["stage_qc"])
+            self.assertEqual(
+                manifest.stages[StageName.MINIMIZATION.value].status,
+                StageStatus.FAILED.value,
+            )
+            self.assertNotIn(
+                (StageName.MINIMIZATION, StageStatus.COMPLETED),
+                transitions,
+            )
+            for stage in (StageName.NVT, StageName.NPT, StageName.PRODUCTION):
+                self.assertEqual(
+                    manifest.stages[stage.value].status,
+                    StageStatus.NOT_READY.value,
+                )
 
 
 class MDPipelineThreadTests(unittest.TestCase):
