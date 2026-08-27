@@ -25,6 +25,7 @@ from core import wsl_bridge
 from core.artifact_validation import validate_gro, validate_topology
 from core.complex_builder import combine_gro, normalize_ligand_topology, patch_topology_for_ligand
 from core.forcefield_manager import stage_charmm36_force_field
+from core.gromacs_capabilities import resolve_gromacs_binary
 from core.run_manifest import (
     CommandRecord,
     RunManifest,
@@ -115,8 +116,7 @@ class PreparationCommandBuilder:
     """Build immutable commands using the selected executable and environment."""
 
     def __init__(self, gromacs_binary: str, conda_environment: str):
-        selected = str(gromacs_binary).strip()
-        self.gromacs_binary = "gmx" if not selected or selected.lower() == "auto" else selected
+        self.gromacs_binary = resolve_gromacs_binary(gromacs_binary)
         self.conda_environment = str(conda_environment).strip() or "moldynstudio"
 
     def gromacs(

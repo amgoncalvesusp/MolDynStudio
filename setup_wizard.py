@@ -298,7 +298,8 @@ class SetupWizard(QDialog):
         )
 
     def _refresh_env(self) -> None:
-        ok, msg = wsl_bridge.check_conda_env()
+        env_name = str(self.settings.value("conda_environment", "moldynstudio"))
+        ok, msg = wsl_bridge.check_conda_env(env_name)
         self._env_ok_cached = ok  # consumed by _refresh_gmx, avoids 2nd probe
         if ok:
             self.row_env.set_ok(msg)

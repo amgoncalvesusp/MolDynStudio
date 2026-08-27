@@ -213,6 +213,22 @@ class SettingsMigrationTests(unittest.TestCase):
 
 
 class SetupWizardCapabilityStatusTests(unittest.TestCase):
+    def test_environment_status_uses_saved_conda_environment(self):
+        wizard = mock.Mock()
+        wizard.settings.value.return_value = "research"
+        wizard.row_env = mock.Mock()
+        wizard._create_env = mock.Mock()
+
+        with mock.patch(
+            "setup_wizard.wsl_bridge.check_conda_env",
+            return_value=(True, "conda env 'research' found"),
+        ) as check:
+            SetupWizard._refresh_env(wizard)
+
+        check.assert_called_once_with("research")
+        self.assertTrue(wizard._env_ok_cached)
+        wizard.row_env.set_ok.assert_called_once_with("conda env 'research' found")
+
     def test_callable_cpu_build_is_green_without_claiming_verified_gpu(self):
         class FakeSettings:
             values = {

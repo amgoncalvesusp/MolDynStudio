@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from core.preparation_orchestrator import (
     CommandResult,
@@ -76,7 +77,7 @@ def request(root: Path, ligand: str | None = None) -> PreparationRequest:
         ),
         ligand_path=str(root / ligand) if ligand else None,
         md_parameters=MDParameters(duration_ns=1.0),
-        gromacs_binary="/opt/gromacs/bin/gmx-custom",
+        gromacs_binary="auto",
         conda_environment="md-env",
         requested_cores=6,
         gpu_mode="CPU only",
@@ -101,7 +102,7 @@ class PreparationOrchestratorTests(unittest.TestCase):
                 ["pdb2gmx", "editconf", "solvate", "grompp", "genion"],
             )
             self.assertTrue(
-                all(command.argv[0] == "/opt/gromacs/bin/gmx-custom" for command in runner.commands)
+                all(command.argv[0] == "gmx" for command in runner.commands)
             )
             self.assertTrue(all(command.conda_environment == "md-env" for command in runner.commands))
             self.assertEqual(runner.commands[-1].stdin_text, "SOL\n")
@@ -206,11 +207,54 @@ class PreparationOrchestratorTests(unittest.TestCase):
             self.assertNotEqual(manifest.stages["minimization"].status, StageStatus.READY.value)
 
     def test_command_builder_never_hardcodes_gmx(self):
-        builder = PreparationCommandBuilder("custom-gmx", "custom-env")
+        with (
+            mock.patch(
+                "core.gromacs_capabilities.wsl_bridge.IS_WINDOWS", True
+            ),
+            mock.patch(
+                "core.gromacs_capabilities.wsl_bridge.win_to_wsl",
+                return_value="/mnt/c/tools/gmx-custom",
+            ) as translate,
+        ):
+            builder = PreparationCommandBuilder(r"C:\tools\gmx-custom", "custom-env")
         command = builder.gromacs("genion", ["-s", "ions.tpr"], "project", stdin_text="SOL\n")
 
-        self.assertEqual(command.argv[:2], ("custom-gmx", "genion"))
+        translate.assert_called_once_with(r"C:\tools\gmx-custom")
+        self.assertEqual(command.argv[:2], ("/mnt/c/tools/gmx-custom", "genion"))
         self.assertEqual(command.conda_environment, "custom-env")
+
+    def test_command_builder_accepts_valid_explicit_linux_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executable = Path(tmp) / "gmx-custom"
+            executable.touch()
+            executable.chmod(0o755)
+            with mock.patch(
+                "core.gromacs_capabilities.wsl_bridge.IS_WINDOWS", False
+            ):
+                builder = PreparationCommandBuilder(str(executable), "research")
+
+        self.assertEqual(builder.gromacs_binary, str(executable))
+        self.assertEqual(builder.conda_environment, "research")
+
+    def test_command_builder_resolves_auto_before_building_commands(self):
+        with mock.patch(
+            "core.preparation_orchestrator.resolve_gromacs_binary",
+            return_value="gmx",
+        ) as resolve:
+            builder = PreparationCommandBuilder("Auto", "research")
+
+        self.assertEqual(builder.gromacs_binary, "gmx")
+        self.assertEqual(builder.conda_environment, "research")
+        resolve.assert_called_once_with("Auto")
+
+    def test_command_builder_rejects_missing_binary_before_any_command(self):
+        with (
+            mock.patch(
+                "core.gromacs_capabilities.wsl_bridge.IS_WINDOWS", False
+            ),
+            self.assertRaisesRegex(FileNotFoundError, "GROMACS executable not found"),
+        ):
+            PreparationCommandBuilder("/missing/gmx", "research")
 
     def test_rerun_failure_invalidates_every_completed_downstream_stage(self):
         with tempfile.TemporaryDirectory() as tmp:

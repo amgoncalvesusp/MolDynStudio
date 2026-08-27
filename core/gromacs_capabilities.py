@@ -207,7 +207,12 @@ def build_mdrun_resource_args(
     cores: int,
     capabilities: GromacsCapabilities,
 ) -> tuple[str, ...]:
-    """Build conservative GROMACS 2026.3 resource arguments."""
+    """Build conservative GROMACS 2026.3 resource arguments.
+
+    This composition API is consumed by the stage-aware MD runner introduced
+    in Task 11. Task 9 deliberately does not connect it to the legacy mock MD
+    tab, so capability-driven flags enter production only with the real runner.
+    """
 
     if not capabilities.executable_ok:
         raise GromacsCapabilityError("The selected GROMACS executable is not callable.")
