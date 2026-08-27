@@ -9,8 +9,7 @@ from unittest import mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtWidgets import QPushButton
+from PyQt5.QtWidgets import QApplication, QProgressBar, QPushButton
 
 import gromacs_analysis_studio_v11 as studio
 from setup_wizard import SetupWizard
@@ -107,6 +106,13 @@ class MainWindowSmokeTests(unittest.TestCase):
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source)
+
+    def test_global_fake_progress_is_absent_but_md_run_progress_remains(self):
+        window = studio.MainWindow()
+        self.addCleanup(window.close)
+
+        self.assertFalse(hasattr(window, "progress"))
+        self.assertTrue(window.pages["MD Run"].findChildren(QProgressBar))
 
 
 if __name__ == "__main__":

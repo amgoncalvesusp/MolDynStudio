@@ -36,7 +36,6 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QProgressBar,
     QScrollArea,
     QSpinBox,
     QSplitter,
@@ -1055,9 +1054,6 @@ class MainWindow(QMainWindow):
         self.log.setReadOnly(True)
         self.log.setMinimumHeight(170)
         log_layout.addWidget(self.log)
-        self.progress = QProgressBar()
-        self.progress.setValue(0)
-        log_layout.addWidget(self.progress)
         main_splitter.addWidget(log_group)
         main_splitter.setStretchFactor(0, 1)
 
@@ -1407,7 +1403,6 @@ class MainWindow(QMainWindow):
         for page in self.pages.values():
             page.set_state({})
         self.log.clear()
-        self.progress.setValue(0)
         self._clear_project_context()
         self.current_session_path = None
         self.nav.setCurrentRow(0)
