@@ -1058,8 +1058,8 @@ class MainWindow(QMainWindow):
 
         self.pages: Dict[str, BasePage] = {}
         self._add_page("Project", ProjectPage())
-        self._add_page("MD Setup", MDSetupTab())
-        self._add_page("MD Run", MDRunTab())
+        self._add_page("MD Setup", MDSetupTab(settings=self.settings))
+        self._add_page("MD Run", MDRunTab(settings=self.settings))
         self._add_page("Analysis", AnalysisTab())
         self._add_page("Load System", LoadSystemPage())
         self._add_page("Trajectory Preprocessing", PreprocessingPage())
@@ -1195,6 +1195,12 @@ class MainWindow(QMainWindow):
             return
         self.stack.setCurrentIndex(index)
         name = NAV_ITEMS[index]
+        if name == "MD Run":
+            setup_page = self.pages.get("MD Setup")
+            run_page = self.pages.get("MD Run")
+            if isinstance(setup_page, MDSetupTab) and isinstance(run_page, MDRunTab):
+                project_dir = setup_page.fields["project_dir"].text()
+                run_page.load_project(project_dir)
         self.side_info.setPlainText(self.context_text(name))
 
     def switch_to_page(self, name: str):
