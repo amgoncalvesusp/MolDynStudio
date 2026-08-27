@@ -56,6 +56,10 @@ class MDPipelineTests(unittest.TestCase):
                                  resume_from_stage=StageName.NPT)
         self.assertEqual(tuple(stage.name for stage in resumed),
                          (StageName.NPT, StageName.PRODUCTION))
+        resumed_alias = build_pipeline("p", tuple(StageName),
+                                       resume_from=StageName.NPT)
+        self.assertEqual(tuple(stage.name for stage in resumed_alias),
+                         (StageName.NPT, StageName.PRODUCTION))
 
     def test_pipeline_does_not_reorder_selected_stages_or_add_maxwarn(self):
         stages = build_pipeline("p", (StageName.MINIMIZATION, StageName.NVT,
