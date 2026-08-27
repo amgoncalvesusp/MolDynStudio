@@ -166,6 +166,18 @@ class GromacsLogParserTests(unittest.TestCase):
 
         self.assertIsNone(update)
 
+    def test_parser_rejects_underfilled_tab_rows_without_empty_placeholders(self):
+        from core.gromacs_log_parser import GromacsLogParser
+
+        parser = GromacsLogParser()
+
+        self.assertIsNone(
+            parser.feed_line("Potential Energy\tTemperature (K)\tPressure")
+        )
+        update = parser.feed_line("-4.2e+05\t1.01325")
+
+        self.assertIsNone(update)
+
 
 if __name__ == "__main__":
     unittest.main()

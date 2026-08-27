@@ -117,7 +117,8 @@ def _value_cells(line: str, header: _ThermodynamicHeader) -> list[str] | None:
         return None
 
     if header.layout == "tab":
-        return line.split("\t")
+        tab_cells = line.split("\t")
+        return tab_cells if len(tab_cells) == header.column_count else None
     if header.layout == "fixed":
         return [
             line[offset : offset + _FIXED_COLUMN_WIDTH]
