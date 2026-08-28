@@ -1,14 +1,38 @@
-from __future__ import annotations
 import json
 import tempfile
 import unittest
-from unittest.mock import patch
 from dataclasses import asdict
 from pathlib import Path
-from core.run_manifest import *
+from unittest.mock import patch
+
+from core.run_manifest import (
+    MANIFEST_FILENAME,
+    CommandRecord,
+    RunManifestError,
+    StageName,
+    StageStatus,
+    load_manifest,
+    manifest_path,
+    new_manifest,
+    save_manifest,
+    utc_now_iso,
+)
+
 
 def make_manifest(ligand=None):
-    return new_manifest("project", "protein_ligand" if ligand else "protein", "protein.pdb", ligand, "amber99sb", "tip3p", "gmx", "moldynstudio", 4, "auto")
+    return new_manifest(
+        "project",
+        "protein_ligand" if ligand else "protein",
+        "protein.pdb",
+        ligand,
+        "amber99sb",
+        "tip3p",
+        "gmx",
+        "moldynstudio",
+        4,
+        "auto",
+    )
+
 
 class RunManifestTests(unittest.TestCase):
     def test_names_and_initial_statuses(self):
@@ -33,18 +57,25 @@ class RunManifestTests(unittest.TestCase):
     def test_schema_and_unknown_stage_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "manifest.json"
-            data = asdict(make_manifest()); data["schema_version"] = "99"
+            data = asdict(make_manifest())
+            data["schema_version"] = "99"
             path.write_text(json.dumps(data), encoding="utf-8")
-            with self.assertRaises(RunManifestError): load_manifest(path)
-            data = asdict(make_manifest()); data["stages"]["bogus"] = data["stages"].pop("nvt")
+            with self.assertRaises(RunManifestError):
+                load_manifest(path)
+            data = asdict(make_manifest())
+            data["stages"]["bogus"] = data["stages"].pop("nvt")
             path.write_text(json.dumps(data), encoding="utf-8")
-            with self.assertRaises(RunManifestError): load_manifest(path)
+            with self.assertRaises(RunManifestError):
+                load_manifest(path)
 
     def test_malformed_json_typed_and_atomic_replace(self):
         with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "manifest.json"; path.write_text("{broken", encoding="utf-8")
-            with self.assertRaises(RunManifestError): load_manifest(path)
-            path.write_text("old", encoding="utf-8"); save_manifest(make_manifest(), path)
+            path = Path(d) / "manifest.json"
+            path.write_text("{broken", encoding="utf-8")
+            with self.assertRaises(RunManifestError):
+                load_manifest(path)
+            path.write_text("old", encoding="utf-8")
+            save_manifest(make_manifest(), path)
             self.assertEqual(load_manifest(path).protein_source, "protein.pdb")
 
     def test_corrupt_nested_records_are_rejected(self):
@@ -59,27 +90,33 @@ class RunManifestTests(unittest.TestCase):
                 lambda x: x["stages"]["preparation"].update(commands=[{"stage": "npt", "argv": [], "cwd": "p", "started_at": "t"}]),
                 lambda x: x.update(requested_cores="4"),
             ):
-                data = asdict(make_manifest()); mutate(data)
+                data = asdict(make_manifest())
+                mutate(data)
                 path.write_text(json.dumps(data), encoding="utf-8")
-                with self.assertRaises(RunManifestError): load_manifest(path)
+                with self.assertRaises(RunManifestError):
+                    load_manifest(path)
 
     def test_missing_stage_fields_are_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "manifest.json"
             for field in ("name", "status", "started_at", "finished_at", "message", "commands", "inputs", "outputs"):
-                data = asdict(make_manifest()); data["stages"]["preparation"].pop(field)
+                data = asdict(make_manifest())
+                data["stages"]["preparation"].pop(field)
                 path.write_text(json.dumps(data), encoding="utf-8")
-                with self.assertRaises(RunManifestError): load_manifest(path)
+                with self.assertRaises(RunManifestError):
+                    load_manifest(path)
 
     def test_atomic_failure_preserves_existing_destination(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "manifest.json"
             path.write_text("old-content", encoding="utf-8")
             with patch("core.run_manifest.os.replace", side_effect=OSError("simulated crash")):
-                with self.assertRaises(RunManifestError): save_manifest(make_manifest(), path)
+                with self.assertRaises(RunManifestError):
+                    save_manifest(make_manifest(), path)
             self.assertEqual(path.read_text(encoding="utf-8"), "old-content")
 
     def test_manifest_path(self):
         self.assertEqual(manifest_path("project"), Path("project") / MANIFEST_FILENAME)
 
-if __name__ == "__main__": unittest.main()
+if __name__ == "__main__":
+    unittest.main()
