@@ -189,7 +189,7 @@ class MDRunTab(MolDynBasePage):
             self.steps.append((label, progress, status))
         outer.addWidget(control)
 
-        monitor = QGroupBox("Real-Time Monitoring")
+        monitor = QGroupBox("Live GROMACS Monitoring")
         monitor_layout = QGridLayout(monitor)
         self._add_plot(monitor_layout, "temperature", "Temperature", "K", 0, 0)
         self._add_plot(monitor_layout, "pressure", "Pressure", "bar", 0, 1)
@@ -782,7 +782,10 @@ class MDRunTab(MolDynBasePage):
     def preview_text(self) -> str:
         project = str(self._project_dir) if self._project_dir else "No project loaded"
         return (
-            "[MD Run Preview]\n"
+            "[MD Run Status]\n"
             f"Project: {project}\n"
-            "Pipeline: Minimization -> NVT -> NPT -> Production MD"
+            "Execution: Real GROMACS subprocess pipeline\n"
+            "Pipeline: Minimization -> NVT -> NPT -> Production MD\n"
+            "Outputs: Stage files and run manifest are persisted in the project\n"
+            "Restart: Production resume requires a valid checkpoint and unchanged outputs"
         )

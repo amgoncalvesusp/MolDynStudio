@@ -1,15 +1,71 @@
-# MolDynStudio v1.0.3
+# MolDynStudio v1.1.0
 
 Inventor: Adriano Marques Gonçalves (UNIARA)
 
-MolDynStudio is a PyQt5 desktop prototype for molecular dynamics setup, execution monitoring, and post-MD analysis. It extends the previous GROMACS Analysis Studio prototype by adding:
+MolDynStudio is a PyQt5 desktop application for system preparation, real
+GROMACS molecular-dynamics execution, execution monitoring, and post-MD
+analysis. Version 1.1.0 replaces the former MD Run preview/mock flow with a
+stage-aware pipeline that launches the selected GROMACS executable. Analysis
+modules that do not launch external tools remain clearly labeled as previews.
+
+It provides:
 
 - MD Setup page for system inputs, force-field settings, ligand parameterization choices, and `.mdp` generation
-- MD Run page with pipeline controls, log output, and live monitoring previews
+- MD Run page with pipeline controls, GROMACS log output, checkpoint restart, and live monitoring from parsed output
 - Analysis page with RMSD/RMSF/SASA/PCA/MM-PBSA/MM-GBSA entry points and a CPPTRAJ script builder
 - `.mds` project save/load with 5-minute autosave
 - WSL2 installer script for Windows
 - Conda environment specification for GROMACS, AmberTools, MDAnalysis, MDTraj, ProDy, PyTraj, and Qt
+
+## Supported MD workflows
+
+The real MD pipeline supports:
+
+- **Protein-only** systems.
+- **Protein + separate non-covalent ligand** systems using an AMBER-family
+  protein force field and ACPYPE/GAFF2.
+
+Covalent protein–ligand structures are unsupported. Arbitrary automatic CGenFF
+ligand generation is also unsupported. CHARMM36m can be used for systems whose
+residues are already available in the locally imported force-field package;
+it does not provide automatic CGenFF ligand generation.
+
+## Restart and output continuity
+
+After an interruption, MD Run enables **Resume Production checkpoint** only
+when the production checkpoint and required outputs validate. The resume path
+uses a valid `md.cpt` checkpoint and GROMACS `-cpi`. Keep `md.tpr`, `md.log`,
+`md.edr`, and the other production output files unchanged so GROMACS can
+append to the existing run; replacing, truncating, or renaming those files
+breaks append-mode continuity.
+
+## GPU selection
+
+The **GPU acceleration** setting follows the capabilities reported by the
+selected GROMACS build. **Auto** uses that build's supported backend and can
+fall back to its CPU path. A GPU driver by itself does not guarantee that the
+selected GROMACS executable was built with GPU support. Use the setup
+diagnostics to confirm the executable before relying on GPU execution.
+
+## Prepared project artifacts
+
+The project folder contains the manifest, system/topology inputs, MDP files,
+and the outputs produced by each stage:
+
+```text
+project/
+  moldynstudio_run.json
+  system.gro
+  topol.top
+  em.mdp
+  nvt.mdp
+  npt.mdp
+  md.mdp
+  em.*
+  nvt.*
+  npt.*
+  md.*
+```
 
 ## Run
 

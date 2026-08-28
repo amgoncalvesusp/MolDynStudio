@@ -1,12 +1,72 @@
-# MolDynStudio v1.0.3
+# MolDynStudio v1.1.0
 
 Inventor: Adriano Marques Gonçalves (UNIARA)
 
-MolDynStudio is a PyQt5 desktop application for molecular dynamics setup, execution monitoring, and post-MD analysis with GROMACS-oriented workflows.
+MolDynStudio is a PyQt5 desktop application for preparing systems, running a real
+four-stage GROMACS molecular-dynamics pipeline, monitoring its logs and
+thermodynamic data, and reviewing post-MD analysis outputs. The MD Run page
+executes the selected GROMACS build; it is not a simulated progress demo.
+
+Version 1.1.0 completes the real MD execution path that was previously exposed
+as a preview/mock flow. A trajectory is only available when the selected
+GROMACS commands complete successfully and produce the corresponding output
+files; opening an older `.mds` file does not imply that it contains a trajectory.
+
+## Supported MD workflows
+
+MD Setup and MD Run support these workflows:
+
+- **Protein-only:** prepare and run a protein system through minimization, NVT,
+  NPT, and production MD.
+- **Protein + separate non-covalent ligand:** use an AMBER-family protein force
+  field with the built-in ACPYPE/GAFF2 ligand parameterization path.
+
+Covalent protein–ligand structures and arbitrary automatic CGenFF ligand
+generation are unsupported. CHARMM36m remains available for systems whose
+residues are already provided by the locally imported force-field package; it
+does not add automatic CGenFF ligand generation.
+
+## Restarting an interrupted run
+
+For a production run with a valid `md.cpt` checkpoint, select **Resume
+Production checkpoint** on MD Run. MolDynStudio resumes GROMACS with `-cpi`
+and the existing `md.tpr`, `md.log`, and `md.edr` inputs. Keep the output files
+unchanged between interruption and resume so GROMACS can append continuously;
+do not replace, truncate, or rename them.
+
+## CPU and GPU execution
+
+The **GPU acceleration** setting is evaluated against the capabilities reported
+by the selected GROMACS executable. **Auto** follows that build's available
+backend and otherwise permits the build's normal CPU path. Installing a GPU
+driver alone does not guarantee that the selected GROMACS build has GPU
+support; use the setup diagnostics and select a GPU-enabled build when GPU
+execution is required.
+
+## Project artifacts
+
+Each prepared project keeps its manifest, inputs, MDP files, and stage outputs
+together:
+
+```text
+project/
+  moldynstudio_run.json
+  system.gro
+  topol.top
+  em.mdp
+  nvt.mdp
+  npt.mdp
+  md.mdp
+  em.*
+  nvt.*
+  npt.*
+  md.*
+```
 
 ## Downloads
 
-Installers are published on the GitHub Releases page:
+For a published release, download the matching installers from the GitHub
+Releases page:
 
 - Windows: `MolDynStudio-windows-x86_64.zip`
 - Linux: `MolDynStudio-linux-x86_64.run`

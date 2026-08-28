@@ -1,10 +1,9 @@
 ﻿#!/usr/bin/env python3
-"""
-GROMACS Analysis Studio v1.1 Prototype
---------------------------------------
-Runnable PyQt5 prototype for testing the interface blueprint.
-This version focuses on navigation, session persistence, command preview,
-and mock execution flow for a future full analysis app.
+"""MolDynStudio desktop application entry point.
+
+The MD Setup and MD Run pages prepare projects and launch a real, staged
+GROMACS pipeline. Post-MD analysis modules that do not yet launch external
+backends remain explicitly presented as previews.
 """
 
 from __future__ import annotations
@@ -77,7 +76,7 @@ except Exception:
 
 
 APP_NAME = "MolDynStudio"
-APP_VERSION = "v1.0.3"
+APP_VERSION = "v1.1.0"
 APP_INVENTOR = "Adriano Marques Gonçalves (UNIARA)"
 
 NAV_ITEMS = [
@@ -945,7 +944,10 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(logo_path)))
         self._build_ui()
         self._autosave_timer.start(5 * 60 * 1000)
-        self.statusBar().showMessage("MolDynStudio ready. Configure MD setup, run previews, or load an existing project.")
+        self.statusBar().showMessage(
+            "MolDynStudio ready. Configure MD setup, run GROMACS MD, "
+            "or inspect analysis previews."
+        )
 
     def _apply_style(self):
         self.setStyleSheet(
@@ -1237,7 +1239,8 @@ class MainWindow(QMainWindow):
     def context_text(self, name: str) -> str:
         texts = {
             "MD Setup": "Prepare proteins, ligands, force fields, solvent, ions, and MDP files before launching a run.",
-            "MD Run": "Monitor minimization, equilibration, production, logs, and thermodynamic traces.",
+            "MD Run": "Run the selected GROMACS build through minimization, NVT, NPT, and production MD. "
+            "Stage outputs, checkpoints, logs, and parsed thermodynamic traces are persisted in the project folder.",
             "Analysis": "Run post-MD analyses and open the MM-PBSA/MM-GBSA dialog or CPPTRAJ builder.",
             "Project": "Set the project type first. Proteinâ€“ligand projects unlock the most useful interaction and free-energy workflows.",
             "Load System": "Recommended minimum: TPR + processed trajectory. Add EDR for energy plots and NDX for custom groups.",
@@ -1250,7 +1253,7 @@ class MainWindow(QMainWindow):
             "Batch Comparison": "Use the same time window and frame interval when comparing ligands or replicas.",
             "Results Viewer": "This prototype viewer contains demo content. Later versions can show real outputs from XVG/CSV/MMPBSA files.",
             "Reports & Export": "Quick report is the safest default. Full report should combine stability, interactions, energy, and free-energy summaries.",
-            "Settings": "Keep executable paths here. This prototype does not call external tools yet, but the fields are ready for the next stage.",
+            "Settings": "Configure the GROMACS executable, Conda environment, CPU cores, and GPU mode used by the MD pipeline.",
         }
         return f"{name}\n\n{texts.get(name, '')}"
 
