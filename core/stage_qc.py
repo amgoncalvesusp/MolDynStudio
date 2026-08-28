@@ -85,7 +85,7 @@ class QCCheck:
             "severity": self.severity.value,
             "message": self.message,
             "source": self.source,
-            "observations": dict(self.observations),
+            "observations": _strict_json_observations(self.observations),
         }
 
 
@@ -422,6 +422,25 @@ def _range_observations(values: tuple[float, ...]) -> dict[str, float | int]:
     }
 
 
+def _strict_json_observations(
+    observations: Mapping[str, float | int],
+) -> dict[str, float | int]:
+    """Copy only finite numeric observations accepted by strict JSON."""
+
+    return {
+        name: value
+        for name, value in observations.items()
+        if (
+            isinstance(name, str)
+            and not isinstance(value, bool)
+            and (
+                isinstance(value, int)
+                or (isinstance(value, float) and math.isfinite(value))
+            )
+        )
+    }
+
+
 def _check(
     gate: str,
     severity: QCSeverity,
@@ -429,12 +448,15 @@ def _check(
     source: str,
     observations: Mapping[str, float | int],
 ) -> QCCheck:
+    strict_observations = _strict_json_observations(observations)
+    if len(strict_observations) != len(observations):
+        message = f"{message} Non-finite numeric observations were omitted."
     return QCCheck(
         gate=gate,
         severity=severity,
         message=message,
         source=source,
-        observations=MappingProxyType(dict(observations)),
+        observations=MappingProxyType(strict_observations),
     )
 
 

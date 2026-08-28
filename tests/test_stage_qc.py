@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -136,6 +138,51 @@ class StageQCTests(unittest.TestCase):
         self.assertEqual(first["stage"], StageName.NVT.value)
         self.assertEqual(first["outcome"], "passed")
         self.assertIsInstance(first["checks"], list)
+
+    def test_non_finite_diagnostics_never_enter_manifest_observations(self):
+        result, _log_path = self._evaluate(
+            "\n".join(
+                (
+                    "Epot = 1e309",
+                    "Potential Energy = 1e309",
+                    "Temperature = 1e309",
+                    "Pressure = 1e309",
+                )
+            )
+        )
+
+        self.assertEqual(result.outcome, "warning")
+        self.assertTrue(all(check.severity == QCSeverity.WARNING for check in result.checks))
+        self.assertTrue(
+            all(
+                all(
+                    not isinstance(value, float) or math.isfinite(value)
+                    for value in check.observations.values()
+                )
+                for check in result.checks
+            )
+        )
+        self.assertTrue(
+            all(
+                "Non-finite numeric observations were omitted." in check.message
+                for check in result.checks
+            )
+        )
+
+        payload = result.to_manifest()
+        encoded = json.dumps(payload, allow_nan=False)
+
+        def reject_constant(value: str):
+            raise AssertionError(f"Non-standard JSON constant persisted: {value}")
+
+        decoded = json.loads(encoded, parse_constant=reject_constant)
+        for check in decoded["checks"]:
+            self.assertTrue(
+                all(
+                    not isinstance(value, float) or math.isfinite(value)
+                    for value in check["observations"].values()
+                )
+            )
 
 
 if __name__ == "__main__":

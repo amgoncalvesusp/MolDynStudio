@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import threading
 import unittest
@@ -764,6 +765,47 @@ class MDPipelineServiceTests(unittest.TestCase):
                     manifest.stages[stage.value].status,
                     StageStatus.NOT_READY.value,
                 )
+
+    def test_non_finite_qc_diagnostics_persist_as_strict_json(self):
+        class NonFiniteDiagnosticRunner(FakeCommandRunner):
+            def execute(self, command, on_output=None) -> CommandOutcome:
+                outcome = super().execute(command, on_output)
+                if command.stage == StageName.MINIMIZATION.value and command.args[0] == "mdrun":
+                    self._write(
+                        "em.log",
+                        "\n".join(
+                            (
+                                "Epot = 1e309",
+                                "Potential Energy = 1e309",
+                                "Temperature = 1e309",
+                                "Pressure = 1e309",
+                            )
+                        ),
+                    )
+                return outcome
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            service = MDPipelineService(
+                path,
+                build_pipeline(root, (StageName.MINIMIZATION,)),
+                _capabilities(),
+                command_runner=NonFiniteDiagnosticRunner(root),
+                validators=_validators(),
+            )
+
+            self.assertTrue(service.run())
+
+            def reject_constant(value: str):
+                raise AssertionError(f"Non-standard JSON constant persisted: {value}")
+
+            payload = json.loads(
+                path.read_text(encoding="utf-8"),
+                parse_constant=reject_constant,
+            )
+            checks = payload["metadata"]["stage_qc"]["minimization"]["checks"]
+            self.assertTrue(all(check["severity"] == "warning" for check in checks))
 
 
 class MDPipelineThreadTests(unittest.TestCase):

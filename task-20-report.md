@@ -56,6 +56,23 @@ GREEN:
 - Confirmed fatal QC is persisted before the stage is failed and that stale
   downstream QC entries are removed during invalidation.
 
+## Strict-JSON hardening follow-up
+
+- Reproduced Python overflow parsing (`1e309`) as non-finite QC samples that
+  could otherwise reach manifest observations as `Infinity` or `NaN`.
+- Sanitized observations at QC-check construction and again at manifest
+  serialization. Non-finite numeric values are omitted, affected messages
+  explain the omission, and the existing warning/fatal decision is preserved.
+- Added unit coverage for raw and serialized observations plus an integration
+  regression that reads the persisted manifest with a strict JSON decoder.
+- TDD RED confirmed raw `QCCheck.observations` contained non-finite values;
+  GREEN confirmed strict serialization and persistence while finite behavior
+  remained covered by the existing diagnostic tests.
+- Verification: focused QC tests passed (8 tests, 92% coverage); the full suite
+  passed (270 tests, 1 skipped, 73 subtests); touched-file Ruff, Python
+  compilation, and `git diff --check` passed. Repository-wide Ruff remains
+  blocked by 40 pre-existing findings in `tests/test_run_manifest.py`.
+
 ## Limits
 
 - No live GROMACS or WSL execution was performed or claimed. Validation used
