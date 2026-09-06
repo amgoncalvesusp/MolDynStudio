@@ -21,6 +21,7 @@ DIST_DIR = REPO_ROOT / "dist"
 DEFAULT_OUTPUT = DIST_DIR / "MolDynStudio-linux-x86_64.run"
 
 INCLUDE_ROOT_FILES = (
+    "LICENSE",
     "README.md",
     "main.py",
     "gromacs_analysis_studio_v11.py",

@@ -7,14 +7,11 @@ version, including embedded libraries and fonts.
 
 ## Distribution status
 
-The repository currently has no application license declaration. The PyPI builds
-of PyQt5 and PyQtWebEngine use GPLv3, not LGPL. Before distributing a combined
-application, the copyright holder must select and comply with a GPL-compatible
-application license, or obtain the appropriate commercial licenses. Publishing
-source on GitHub alone does not resolve this requirement. This document is not a
-substitute for corresponding source, installation information, or other required
-license materials. Binary release approval remains pending that decision and an
-audit of the actual bundled components.
+MolDynStudio's copyright holder has authorized distribution of the application
+under GPL-3.0-only. See the repository's `LICENSE` and `README.md`. The PyPI builds
+of PyQt5 and PyQtWebEngine use GPLv3, not LGPL. Third-party components keep their
+own terms; this application license does not relicense any force-field package.
+Release source and rebuild instructions accompany the installers.
 
 ## Windows runtime
 

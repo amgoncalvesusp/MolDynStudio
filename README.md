@@ -1,5 +1,12 @@
 # MolDynStudio v1.1.1
 
+Copyright (C) 2026 Adriano Marques Gonçalves.
+MolDynStudio is free software under the GNU General Public License version 3
+(GPL-3.0-only). You may redistribute and modify it under those terms. It is
+provided WITHOUT ANY WARRANTY, including MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See [LICENSE](LICENSE). Third-party components retain their
+own licenses; see [third-party notices](assets/licenses/THIRD_PARTY_NOTICES.md).
+
 Inventor: Adriano Marques Gonçalves (UNIARA)
 
 MolDynStudio is a PyQt5 desktop application for preparing systems, running a real

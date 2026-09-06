@@ -15,6 +15,7 @@ from packaging.utils import canonicalize_name
 def collect_runtime_licenses(repo_root: Path, destination: Path) -> None:
     """Copy original texts and metadata for the resolved runtime dependency tree."""
     destination.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "LICENSE", destination / "MOLDYNSTUDIO-LICENSE.txt")
     shutil.copy2(
         repo_root / "assets/licenses/THIRD_PARTY_NOTICES.md",
         destination / "THIRD_PARTY_NOTICES.md",

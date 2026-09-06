@@ -19,6 +19,7 @@ class CollectLicensesTests(unittest.TestCase):
         notice.write_text("Application notice\n", encoding="utf-8")
         (self.root / "requirements.txt").write_text("# Runtime\nRoot_Pkg>=1\n", encoding="utf-8")
         (self.root / "LICENSE.txt").write_bytes(b"Python license\r\n")
+        (self.root / "LICENSE").write_bytes(b"Application GPLv3\n")
         self.output = self.root / "output"
         self.distributions = {
             "root-pkg": self.distribution("root-pkg"),
@@ -73,6 +74,7 @@ class CollectLicensesTests(unittest.TestCase):
             self.assertEqual((package / filename).read_bytes(), (original / filename).read_bytes())
         self.assertFalse((package / "module.py").exists())
         self.assertEqual((self.output / "PYTHON-LICENSE.txt").read_bytes(), b"Python license\r\n")
+        self.assertEqual((self.output / "MOLDYNSTUDIO-LICENSE.txt").read_bytes(), b"Application GPLv3\n")
         self.assertEqual(
             next(item for item in manifest if item["name"] == "root-pkg")["license_files"],
             ["licenses/LICENSE.txt"],
