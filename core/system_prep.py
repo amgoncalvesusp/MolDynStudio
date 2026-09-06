@@ -201,12 +201,12 @@ class SystemPrepWorker(QThread):
             gromacs_binary=self.p.gromacs_binary,
             conda_environment=self.p.conda_environment,
         )
-        service = PreparationOrchestrator(
-            request, on_log=self.log.emit, on_progress=self.progress.emit
-        )
         try:
+            service = PreparationOrchestrator(
+                request, on_log=self.log.emit, on_progress=self.progress.emit
+            )
             service.run()
-        except PreparationError as exc:
+        except (PreparationError, OSError, ValueError) as exc:
             self.done.emit(False, str(exc))
             return
         self.done.emit(True, "System preparation complete.")

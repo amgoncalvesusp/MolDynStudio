@@ -546,15 +546,15 @@ class PreparationWorker(QThread):
         self.service_options = dict(service_options)
 
     def run(self) -> None:
-        service = PreparationOrchestrator(
-            self.request,
-            on_log=self.log.emit,
-            on_progress=self.progress.emit,
-            **self.service_options,
-        )
         try:
+            service = PreparationOrchestrator(
+                self.request,
+                on_log=self.log.emit,
+                on_progress=self.progress.emit,
+                **self.service_options,
+            )
             service.run()
-        except PreparationError as exc:
+        except (PreparationError, OSError, ValueError) as exc:
             self.done.emit(False, str(exc))
             return
         self.done.emit(True, "System preparation complete.")

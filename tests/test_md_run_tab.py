@@ -184,7 +184,7 @@ class MDRunTabTests(unittest.TestCase):
             runner = created[0]
             self.assertTrue(runner.started)
             self.assertFalse(runner.resume)
-            self.assertEqual(runner.manifest_file, root / "moldynstudio_run.json")
+            self.assertEqual(runner.manifest_file, (root / "moldynstudio_run.json").resolve())
             self.assertEqual(
                 [stage.name for stage in runner.stages],
                 [

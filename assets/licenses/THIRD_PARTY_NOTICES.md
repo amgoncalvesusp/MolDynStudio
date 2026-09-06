@@ -35,10 +35,9 @@ license text; metadata alone is not a substitute for those texts.
 | PyInstaller bootloader | GPL with the PyInstaller exception; https://pyinstaller.org/en/stable/license.html |
 
 The installed Qt wheel's top-level license is not a complete inventory of
-Chromium's third-party code. A release maintainer must supply the exact bundled
-Qt/WebEngine/Chromium notices and corresponding source as required, and provide
-a compliant way to modify/rebuild/relink the combined work. Do not interpret the
-automatic collection step as a declaration that these obligations are fulfilled.
+Chromium's third-party code. The release additionally provides the full Qt
+5.15.2 source archive and preserves its license/notice texts in the Windows ZIP.
+See `REBUILD.md` for source access and modification/rebuild instructions.
 
 ## Linux and external scientific tools
 

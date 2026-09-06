@@ -12,6 +12,7 @@ from core.preparation_orchestrator import (
     PreparationError,
     PreparationOrchestrator,
     PreparationRequest,
+    PreparationWorker,
 )
 from core.run_manifest import (
     CommandRecord,
@@ -85,6 +86,24 @@ def request(root: Path, ligand: str | None = None) -> PreparationRequest:
 
 
 class PreparationOrchestratorTests(unittest.TestCase):
+    def test_worker_reports_executable_resolution_failure(self):
+        for error in (FileNotFoundError("GROMACS executable not found: gmx"),
+                      ValueError("A Windows .exe cannot be used inside WSL")):
+            with self.subTest(error=type(error).__name__):
+                worker = PreparationWorker(PreparationRequest(
+                    system=SystemPrepParams(pdb_path="protein.pdb", work_dir="project"),
+                ))
+                result: list[tuple[bool, str]] = []
+                worker.done.connect(lambda ok, message: result.append((ok, message)))
+
+                with mock.patch(
+                    "core.preparation_orchestrator.resolve_gromacs_binary",
+                    side_effect=error,
+                ):
+                    worker.run()
+
+                self.assertEqual(result, [(False, str(error))])
+
     def test_charmm_mdps_follow_topology_force_field_not_default_md_parameters(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

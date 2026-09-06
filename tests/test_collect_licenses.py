@@ -17,6 +17,7 @@ class CollectLicensesTests(unittest.TestCase):
         notice = self.root / "assets/licenses/THIRD_PARTY_NOTICES.md"
         notice.parent.mkdir(parents=True)
         notice.write_text("Application notice\n", encoding="utf-8")
+        notice.with_name("REBUILD.md").write_text("Rebuild instructions\n", encoding="utf-8")
         (self.root / "requirements.txt").write_text("# Runtime\nRoot_Pkg>=1\n", encoding="utf-8")
         (self.root / "LICENSE.txt").write_bytes(b"Python license\r\n")
         (self.root / "LICENSE").write_bytes(b"Application GPLv3\n")

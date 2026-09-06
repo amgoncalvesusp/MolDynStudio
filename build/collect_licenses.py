@@ -16,10 +16,8 @@ def collect_runtime_licenses(repo_root: Path, destination: Path) -> None:
     """Copy original texts and metadata for the resolved runtime dependency tree."""
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(repo_root / "LICENSE", destination / "MOLDYNSTUDIO-LICENSE.txt")
-    shutil.copy2(
-        repo_root / "assets/licenses/THIRD_PARTY_NOTICES.md",
-        destination / "THIRD_PARTY_NOTICES.md",
-    )
+    for filename in ("THIRD_PARTY_NOTICES.md", "REBUILD.md"):
+        shutil.copy2(repo_root / "assets/licenses" / filename, destination / filename)
     requirements = (repo_root / "requirements.txt").read_text(encoding="utf-8")
     pending = [
         Requirement(line).name

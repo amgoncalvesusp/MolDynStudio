@@ -78,6 +78,8 @@ class SystemPrepTests(unittest.TestCase):
         from core.preparation_orchestrator import PreparationError
 
         with mock.patch(
+            "core.preparation_orchestrator.resolve_gromacs_binary", return_value="gmx",
+        ), mock.patch(
             "core.preparation_orchestrator.PreparationOrchestrator.run",
             side_effect=PreparationError(
                 "WARNING 1 [file ions.mdp]: suspicious setting\n"
@@ -89,6 +91,24 @@ class SystemPrepTests(unittest.TestCase):
         self.assertFalse(result[-1][0])
         self.assertIn("WARNING 1", result[-1][1])
         self.assertIn("Fatal error", result[-1][1])
+
+    def test_compatibility_worker_reports_executable_resolution_failure(self):
+        for error in (FileNotFoundError("GROMACS executable not found: gmx"),
+                      ValueError("A Windows .exe cannot be used inside WSL")):
+            with self.subTest(error=type(error).__name__):
+                worker = SystemPrepWorker(
+                    SystemPrepParams(pdb_path="protein.pdb", work_dir="project")
+                )
+                result: list[tuple[bool, str]] = []
+                worker.done.connect(lambda ok, message: result.append((ok, message)))
+
+                with mock.patch(
+                    "core.preparation_orchestrator.resolve_gromacs_binary",
+                    side_effect=error,
+                ):
+                    worker.run()
+
+                self.assertEqual(result, [(False, str(error))])
 
     def test_current_charmm_force_field_is_staged_from_local_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -139,6 +159,8 @@ class SystemPrepTests(unittest.TestCase):
             worker.done.connect(lambda ok, message: result.append((ok, message)))
 
             with mock.patch(
+                "core.preparation_orchestrator.resolve_gromacs_binary", return_value="gmx",
+            ), mock.patch(
                 "core.preparation_orchestrator.ensure_noncovalent_complex",
             ) as validate_structure:
                 worker.run()
