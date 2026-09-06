@@ -8,7 +8,7 @@ import gromacs_analysis_studio_v11 as studio
 
 class StudioMainTests(unittest.TestCase):
     def test_release_version_reflects_real_md_pipeline(self):
-        self.assertEqual(studio.APP_VERSION, "v1.1.0")
+        self.assertEqual(studio.APP_VERSION, "v1.1.1")
 
     def test_release_metadata_includes_inventor(self):
         self.assertEqual(

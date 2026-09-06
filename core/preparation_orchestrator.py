@@ -248,6 +248,12 @@ class PreparationOrchestrator:
         wsl_bridge.win_to_wsl(protein)
         self.structure_validator(protein)
         if self.request.ligand_path:
+            if not self.request.system.force_field.upper().startswith("AMBER"):
+                raise PreparationError(
+                    "Automatic ACPYPE/GAFF2 ligand parameterization requires an "
+                    "AMBER-family protein force field; it cannot be combined with "
+                    f"{self.request.system.force_field}."
+                )
             validate_acpype_input(self.request.ligand_path)
 
     def _prepare_force_field(self, root: Path) -> None:
@@ -346,7 +352,11 @@ class PreparationOrchestrator:
         if not topology_result.ok:
             raise PreparationError(f"topol.top validation failed: {topology_result.message}")
 
-        generated = generate_all_mdp(self.request.md_parameters)
+        generated = generate_all_mdp(replace(
+            self.request.md_parameters,
+            force_field=self.request.system.force_field,
+            water_model=self.request.system.water_model,
+        ))
         mdp_paths: dict[str, Path] = {}
         for filename, content in generated.items():
             target = root / filename

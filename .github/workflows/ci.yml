@@ -59,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           python build/create_installer.py
-          Compress-Archive -Path dist/MolDynStudio.exe -DestinationPath dist/MolDynStudio-windows-x86_64.zip -Force
+          Compress-Archive -Path dist/MolDynStudio.exe,dist/licenses -DestinationPath dist/MolDynStudio-windows-x86_64.zip -Force
           if (-not (Test-Path -LiteralPath dist/MolDynStudio-windows-x86_64.zip)) { throw "Windows archive was not created" }
 
       - name: Upload Linux installer

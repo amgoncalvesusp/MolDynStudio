@@ -22,6 +22,11 @@ import tempfile
 import shutil
 from pathlib import Path
 
+if __package__:
+    from .collect_licenses import collect_runtime_licenses
+else:
+    from collect_licenses import collect_runtime_licenses
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENTRY = REPO_ROOT / "main.py"
 BUILD_REQUIREMENTS = REPO_ROOT / "requirements-build.txt"
@@ -60,6 +65,9 @@ def build() -> int:
     spec_path = work_path
     dist_path = REPO_ROOT / "dist"
 
+    license_path = work_path / "licenses"
+    collect_runtime_licenses(REPO_ROOT, license_path)
+
     required = [REPO_ROOT / "environment.yml", REPO_ROOT / "install_wsl.ps1"]
     missing = [str(r) for r in required if not r.exists()]
     if missing:
@@ -80,6 +88,7 @@ def build() -> int:
         "--distpath", str(dist_path),
         "--add-data", f"{REPO_ROOT / 'environment.yml'}{sep}.",
         "--add-data", f"{REPO_ROOT / 'install_wsl.ps1'}{sep}.",
+        "--add-data", f"{license_path}{sep}assets/licenses/runtime",
         "--hidden-import", "PyQt5.sip",
         "--hidden-import", "PyQt5.QtWebEngineWidgets",
         "--hidden-import", "matplotlib.backends.backend_qt5agg",
@@ -96,6 +105,7 @@ def build() -> int:
     print("Running:", " ".join(args))
     result = subprocess.call(args, cwd=str(REPO_ROOT))
     if result == 0:
+        shutil.copytree(license_path, dist_path / "licenses", dirs_exist_ok=True)
         shutil.rmtree(work_path, ignore_errors=True)
     return result
 

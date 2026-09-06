@@ -1,4 +1,4 @@
-# MolDynStudio v1.1.0
+# MolDynStudio v1.1.1
 
 Inventor: Adriano Marques Gonçalves (UNIARA)
 
@@ -83,13 +83,19 @@ python -m unittest discover -s tests
 
 See `README_GROMACS_Analysis_Studio_v11.md` for setup and release-build details.
 
-## Offline CHARMM36m
+## Integrated CHARMM36m
 
 CHARMM36m system preparation never downloads force-field files at runtime.
-From **MD Setup**, select **Import package…** once and choose the
-official `charmm36-feb2026_cgenff-5.0.ff.tgz` archive. MolDynStudio verifies
+From **MD Setup**, select **Download CHARMM36m** once. The application fetches
+the official package directly from the MacKerell Laboratory over HTTPS.
+Alternatively, use **Import package…** with the official
+`charmm36-feb2026_cgenff-5.0.ff.tgz` archive. MolDynStudio verifies
 its SHA-256 checksum and stores it in the local application cache. Subsequent
 simulations run without Internet access.
+
+Version 1.1.1 also enforces CHARMM force-switch/cutoff settings when generating
+MDPs through the backend, blocks incompatible automatic GAFF2 ligand assignment,
+rejects invalid/empty MD outputs, and preserves Linux force-field caches on upgrade.
 
 The current ligand workflow intentionally supports non-covalent ligands only.
 Automatic ACPYPE/GAFF2 parameterization is restricted to AMBER-family protein
@@ -99,3 +105,5 @@ parameters is not bundled.
 
 See `assets/forcefields/README.md` for the official package name, checksum,
 and redistribution note.
+
+Third-party terms and scientific citations: `assets/licenses/THIRD_PARTY_NOTICES.md`.

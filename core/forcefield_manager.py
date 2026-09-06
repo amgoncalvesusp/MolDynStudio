@@ -10,13 +10,20 @@ import stat
 import sys
 import tarfile
 import tempfile
+import time
 from typing import BinaryIO
+from urllib.request import urlopen
 
 
 CHARMM36_RELEASE = "feb2026_cgenff-5.0"
 CHARMM36_BASENAME = f"charmm36-{CHARMM36_RELEASE}"
 CHARMM36_DIRECTORY = f"{CHARMM36_BASENAME}.ff"
 CHARMM36_ARCHIVE_NAME = f"{CHARMM36_DIRECTORY}.tgz"
+CHARMM36_URL = (
+    "https://mackerell.umaryland.edu/download.php?filename="
+    f"CHARMM_ff_params_files%2F{CHARMM36_ARCHIVE_NAME}"
+)
+MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
 CHARMM36_SHA256 = "c2b0c70e21cced150528ee25d205e5bd3367a5e55e85c2ff0403911980528151"
 CHARMM36_TREE_SHA256 = "5247f6a1db2c55e282c81ba7a55423d8fe08eb45231511ddca849f49a69b2799"
 REQUIRED_FORCE_FIELD_FILES = (
@@ -224,6 +231,23 @@ def install_charmm36_archive(
     return destination
 
 
+def download_charmm36_force_field(*, cache_root: Path | None = None) -> Path:
+    """Explicit first-use download; simulations themselves remain offline."""
+    with tempfile.TemporaryDirectory(prefix="moldynstudio-charmm-download-") as tmp:
+        archive = Path(tmp) / CHARMM36_ARCHIVE_NAME
+        deadline = time.monotonic() + 120
+        with urlopen(CHARMM36_URL, timeout=30) as response, archive.open("wb") as output:
+            total = 0
+            while chunk := response.read(64 * 1024):
+                if time.monotonic() > deadline:
+                    raise TimeoutError("CHARMM36m download timed out. Retry or import a local package.")
+                total += len(chunk)
+                if total > MAX_DOWNLOAD_BYTES:
+                    raise ValueError("CHARMM36m download exceeds the size limit.")
+                output.write(chunk)
+        return install_charmm36_archive(archive, cache_root=cache_root)
+
+
 def stage_charmm36_force_field(
     work_dir: str | Path,
     *,
@@ -257,8 +281,8 @@ def stage_charmm36_force_field(
             )
         else:
             raise ForceFieldUnavailableError(
-                "CHARMM36m is not installed locally. Use 'Import package' "
-                "in the MD Setup screen and select the official "
+                "CHARMM36m is not installed locally. Use 'Download CHARMM36m' "
+                "in MD Setup, or 'Import package' and select the official "
                 f"{CHARMM36_ARCHIVE_NAME} file."
             )
 

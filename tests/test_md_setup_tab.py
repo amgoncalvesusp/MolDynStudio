@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from http.client import IncompleteRead
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,11 +10,54 @@ from unittest import mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtWidgets import QApplication
+from PyQt5.QtGui import QCloseEvent
 
 from tabs.md_setup_tab import ForceFieldImportWorker, MDSetupTab
 
 
 class MDSetupTabTests(unittest.TestCase):
+    def test_close_is_deferred_while_force_field_worker_is_running(self):
+        widget = MDSetupTab()
+        worker = mock.Mock()
+        worker.isRunning.return_value = True
+        widget._force_field_import_worker = worker
+        event = QCloseEvent()
+        self.assertTrue(widget.eventFilter(widget.window(), event))
+        self.assertFalse(event.isAccepted())
+        worker.isRunning.return_value = False
+        self.assertFalse(widget.eventFilter(widget.window(), QCloseEvent()))
+
+    def test_download_uses_worker_and_disables_both_install_actions(self):
+        widget = MDSetupTab()
+        worker = mock.Mock()
+        with mock.patch("tabs.md_setup_tab.ForceFieldImportWorker", return_value=worker) as worker_type:
+            widget.charmm_download_button.click()
+            worker_type.assert_called_once_with(None, parent=widget)
+            self.assertFalse(widget.charmm_download_button.isEnabled())
+            self.assertFalse(widget.charmm_import_button.isEnabled())
+            worker.start.assert_called_once()
+            with mock.patch("tabs.md_setup_tab.QMessageBox.warning"):
+                widget._finish_charmm_import(False, "Network unavailable; import local package.")
+            self.assertTrue(widget.charmm_download_button.isEnabled())
+            self.assertTrue(widget.charmm_import_button.isEnabled())
+
+    def test_worker_download_failure_reaches_gui(self):
+        worker = ForceFieldImportWorker(None)
+        result = []
+        worker.done.connect(lambda ok, detail: result.append((ok, detail)))
+        with mock.patch("tabs.md_setup_tab.download_charmm36_force_field", side_effect=OSError("offline")):
+            worker.run()
+        self.assertEqual(result, [(False, "offline")])
+
+    def test_worker_reports_incomplete_http_response(self):
+        worker = ForceFieldImportWorker(None)
+        result = []
+        worker.done.connect(lambda ok, detail: result.append((ok, detail)))
+        with mock.patch("tabs.md_setup_tab.download_charmm36_force_field", side_effect=IncompleteRead(b"")):
+            worker.run()
+        self.assertFalse(result[0][0])
+        self.assertIn("IncompleteRead", result[0][1])
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])

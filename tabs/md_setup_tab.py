@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
+from http.client import HTTPException
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
@@ -25,11 +26,12 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtCore import QThread, Qt, pyqtSignal
+from PyQt5.QtCore import QEvent, QThread, Qt, pyqtSignal
 
 from core.forcefield_manager import (
     CHARMM36_ARCHIVE_NAME,
     cached_force_field_dir,
+    download_charmm36_force_field,
     install_charmm36_archive,
     is_valid_force_field,
 )
@@ -49,14 +51,17 @@ class ForceFieldImportWorker(QThread):
 
     done = pyqtSignal(bool, str)
 
-    def __init__(self, archive: str, parent=None):
+    def __init__(self, archive: str | None, parent=None):
         super().__init__(parent)
         self.archive = archive
 
     def run(self) -> None:
         try:
-            installed = install_charmm36_archive(self.archive)
-        except (OSError, ValueError) as exc:
+            installed = (
+                download_charmm36_force_field()
+                if self.archive is None else install_charmm36_archive(self.archive)
+            )
+        except (OSError, ValueError, HTTPException) as exc:
             self.done.emit(False, str(exc))
             return
         self.done.emit(True, str(installed))
@@ -135,15 +140,24 @@ class MDSetupTab(MolDynBasePage):
         form.addRow("Force Field", self.fields["force_field"])
 
         charmm_package = QWidget()
-        charmm_layout = QHBoxLayout(charmm_package)
+        charmm_layout = QVBoxLayout(charmm_package)
         charmm_layout.setContentsMargins(0, 0, 0, 0)
         self.charmm_status = QLabel()
         self.charmm_status.setWordWrap(True)
         charmm_layout.addWidget(self.charmm_status, 1)
+        self.charmm_download_button = QPushButton("Download CHARMM36m")
+        self.charmm_download_button.setToolTip(
+            "Download the official MacKerell package once over HTTPS; "
+            "verify SHA-256 and install for offline use. No simulation files are uploaded."
+        )
+        self.charmm_download_button.clicked.connect(
+            lambda: self._start_charmm_install(None)
+        )
+        charmm_layout.addWidget(self.charmm_download_button)
         self.charmm_import_button = QPushButton("Import package…")
         self.charmm_import_button.clicked.connect(self._import_charmm_package)
         charmm_layout.addWidget(self.charmm_import_button)
-        form.addRow("Offline CHARMM36m", charmm_package)
+        form.addRow("CHARMM36m package", charmm_package)
 
         self.fields["water_model"] = QComboBox()
         self.fields["water_model"].addItems(["TIP3P", "SPC/E", "TIP4P-Ew"])
@@ -399,7 +413,7 @@ class MDSetupTab(MolDynBasePage):
             self.charmm_import_button.setText("Verify package…")
         else:
             self.charmm_status.setText(
-                "Action needed — import the official package once"
+                "Action needed — download or import the official package once"
             )
             self.charmm_status.setToolTip(
                 "After import, CHARMM36m simulations run without Internet."
@@ -456,10 +470,17 @@ class MDSetupTab(MolDynBasePage):
         archive = self._select_charmm_archive()
         if not archive:
             return
+        self._start_charmm_install(archive)
+
+    def _start_charmm_install(self, archive: str | None) -> None:
+        if not self.charmm_import_button.isEnabled():
+            return
         self.charmm_import_button.setEnabled(False)
+        self.charmm_download_button.setEnabled(False)
         self.charmm_import_button.setText("Checking package…")
         self.charmm_status.setText(
-            "Checking checksum and installing local files…"
+            "Downloading official package, then checking checksum…"
+            if archive is None else "Checking checksum and installing local files…"
         )
         self.charmm_status.setToolTip("")
         self.charmm_status.setStyleSheet(
@@ -472,13 +493,28 @@ class MDSetupTab(MolDynBasePage):
         self._force_field_import_worker.done.connect(
             self._finish_charmm_import
         )
+        self.window().installEventFilter(self)
         self._force_field_import_worker.start()
+
+    def eventFilter(self, watched, event):
+        worker = getattr(self, "_force_field_import_worker", None)
+        if (
+            event.type() == QEvent.Close and watched is self.window()
+            and worker is not None and worker.isRunning()
+        ):
+            event.ignore()
+            self.request_log.emit(
+                "CHARMM36m installation is still running. Close again after it finishes."
+            )
+            return True
+        return super().eventFilter(watched, event)
 
     def _finish_charmm_import(self, ok: bool, detail: str) -> None:
         self.charmm_import_button.setEnabled(True)
+        self.charmm_download_button.setEnabled(True)
         if not ok:
             self.charmm_status.setText(
-                "Import failed — select the official February 2026 package"
+                "Install failed — retry download or import the official package"
             )
             self.charmm_status.setToolTip(detail)
             self.charmm_status.setStyleSheet(

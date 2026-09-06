@@ -41,6 +41,45 @@ def _archive_bytes(*, unsafe_name: str | None = None) -> bytes:
 
 
 class ForceFieldManagerTests(unittest.TestCase):
+    def test_download_checks_size_and_uses_existing_verified_installer(self):
+        from core.forcefield_manager import download_charmm36_force_field
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            response = io.BytesIO(b"downloaded archive")
+            with (
+                mock.patch("core.forcefield_manager.urlopen", return_value=response) as fetch,
+                mock.patch("core.forcefield_manager.install_charmm36_archive") as install,
+            ):
+                download_charmm36_force_field(cache_root=cache)
+                fetch.assert_called_once()
+                self.assertEqual(fetch.call_args.kwargs["timeout"], 30)
+                install.assert_called_once()
+                self.assertEqual(install.call_args.kwargs["cache_root"], cache)
+                self.assertFalse(install.call_args.args[0].exists())
+
+            with (
+                mock.patch("core.forcefield_manager.urlopen", return_value=io.BytesIO(b"12345")),
+                mock.patch("core.forcefield_manager.MAX_DOWNLOAD_BYTES", 4),
+                mock.patch("core.forcefield_manager.install_charmm36_archive") as install,
+            ):
+                with self.assertRaisesRegex(ValueError, "size limit"):
+                    download_charmm36_force_field(cache_root=cache)
+                install.assert_not_called()
+
+    def test_download_never_installs_network_errors_or_corrupt_payloads(self):
+        from core.forcefield_manager import download_charmm36_force_field
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            with mock.patch("core.forcefield_manager.urlopen", side_effect=OSError("offline")):
+                with self.assertRaisesRegex(OSError, "offline"):
+                    download_charmm36_force_field(cache_root=cache)
+            with mock.patch("core.forcefield_manager.urlopen", return_value=io.BytesIO(b"bad")):
+                with self.assertRaisesRegex(ValueError, "checksum"):
+                    download_charmm36_force_field(cache_root=cache)
+            self.assertFalse((cache / CHARMM36_DIRECTORY).exists())
+
     def test_imports_official_archive_to_persistent_cache(self):
         payload = _archive_bytes()
         with tempfile.TemporaryDirectory() as tmp:

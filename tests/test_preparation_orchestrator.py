@@ -85,6 +85,50 @@ def request(root: Path, ligand: str | None = None) -> PreparationRequest:
 
 
 class PreparationOrchestratorTests(unittest.TestCase):
+    def test_charmm_mdps_follow_topology_force_field_not_default_md_parameters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = request(root)
+            charmm_request = replace(
+                original,
+                system=replace(original.system, force_field="CHARMM36m"),
+                md_parameters=replace(original.md_parameters, water_model="SPC/E"),
+            )
+            with mock.patch("core.preparation_orchestrator.stage_charmm36_force_field"):
+                result = PreparationOrchestrator(
+                    charmm_request,
+                    runner=MaterializingRunner(),
+                    structure_validator=lambda _path: None,
+                ).run()
+
+            for path in result.mdp_files.values():
+                content = path.read_text(encoding="utf-8")
+                self.assertIn("vdw-modifier            = force-switch", content)
+                self.assertIn("rvdw                    = 1.2", content)
+            minimization = result.mdp_files["em.mdp"].read_text(encoding="utf-8")
+            self.assertIn("; Force field: CHARMM36m", minimization)
+            self.assertIn("; Water model: TIP3P", minimization)
+            self.assertEqual(charmm_request.md_parameters.force_field, "AMBER99SB-ILDN")
+
+    def test_non_amber_ligand_requests_fail_before_staging_or_commands(self):
+        for force_field in ("CHARMM36m", "OPLS-AA"):
+            with self.subTest(force_field=force_field), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                original = request(root, "ligand.sdf")
+                runner = MaterializingRunner()
+                service = PreparationOrchestrator(
+                    replace(original, system=replace(original.system, force_field=force_field)),
+                    runner=runner,
+                    structure_validator=lambda _path: None,
+                )
+                with mock.patch("core.preparation_orchestrator.stage_charmm36_force_field") as stage:
+                    with self.assertRaisesRegex(PreparationError, "AMBER"):
+                        service.run()
+                stage.assert_not_called()
+                self.assertEqual(runner.commands, [])
+                manifest = load_manifest(root / "moldynstudio_run.json")
+                self.assertEqual(manifest.stages["preparation"].status, StageStatus.FAILED.value)
+
     def test_protein_only_sequence_uses_configured_binary_and_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
