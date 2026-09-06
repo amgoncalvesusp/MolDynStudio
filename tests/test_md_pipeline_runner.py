@@ -165,6 +165,21 @@ class BlockingProductionRunner(FakeCommandRunner):
 
 
 class MDPipelineServiceTests(unittest.TestCase):
+    def test_empty_energy_output_fails_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            (root / 'em.edr').touch()
+            service = MDPipelineService(
+                path, build_pipeline(root, (StageName.MINIMIZATION,)),
+                _capabilities(), command_runner=FakeCommandRunner(root, omit='em.edr'),
+                validators=replace(_validators(), validate_file=ArtifactValidators().validate_file),
+            )
+            self.assertFalse(service.run())
+            stage = load_manifest(path).stages[StageName.MINIMIZATION.value]
+            self.assertEqual(stage.status, StageStatus.FAILED.value)
+            self.assertIn('em.edr', stage.message)
+
     def test_preflight_failure_blocks_external_commands_and_fails_stage(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

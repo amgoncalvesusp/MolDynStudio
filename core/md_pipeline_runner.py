@@ -67,6 +67,7 @@ from core.md_pipeline import (
     DEFAULT_FREE_SPACE_WARNING_BYTES,
     PipelineCommand,
     PipelineStage,
+    _required_file,
     preflight_stage,
 )
 from core.run_manifest import (
@@ -125,10 +126,7 @@ class ArtifactValidators:
     validate_checkpoint: Validator = validate_checkpoint
     validate_topology: TopologyValidator = validate_topology
     validate_mdp: MdpValidator = validate_mdp
-    validate_file: Validator = lambda path: ValidationResult(
-        Path(path).is_file(),
-        f"File exists: {path}" if Path(path).is_file() else f"File is missing: {path}",
-    )
+    validate_file: Validator = lambda path: _required_file(Path(path))
 
 
 class CommandRunnerService(Protocol):

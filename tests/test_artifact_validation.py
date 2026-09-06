@@ -36,6 +36,17 @@ class ArtifactValidationTests(unittest.TestCase):
             result = validate_gro(self.write(directory, "conf.gro", VALID_GRO))
         self.assertTrue(result.ok)
 
+    def test_gro_rejects_nonfinite_coordinates_and_box(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for value in ('nan', 'inf', '-inf'):
+                for content in (
+                    VALID_GRO.replace('   0.000', f'{value:>8}', 1),
+                    VALID_GRO.replace('1.00000', value, 1),
+                    VALID_GRO.replace('1.00000   1.00000   1.00000', f'1 1 1 0 0 0 0 0 {value}'),
+                ):
+                    with self.subTest(value=value, content=content):
+                        self.assertFalse(validate_gro(self.write(directory, 'bad.gro', content)).ok)
+
     def test_validate_gro_rejects_malformed_files(self):
         cases = (
             "Test\n    1ALA      N    1   0.000   0.000   0.000\n",

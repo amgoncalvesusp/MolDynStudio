@@ -70,8 +70,8 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
-# Canonicalize user overrides and reject destinations whose replacement could
-# destroy an account or system root. Python is already a required dependency,
+# Canonicalize user overrides and reject destinations that could overwrite
+# account or system files. Python is already a required dependency,
 # so this does not add another platform assumption.
 INSTALL_DIR="$("$PYTHON_BIN" -c 'import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$INSTALL_DIR")"
 case "$INSTALL_DIR" in
@@ -115,14 +115,22 @@ mkdir -p "$BIN_DIR" "$DESKTOP_DIR"
 tail -n +"$payload_line" "$0" | base64 -d > "$tmp_dir/payload.tar.gz"
 if [ -e "$INSTALL_DIR" ]; then
   if [ ! -f "$INSTALL_DIR/.moldynstudio-install" ]; then
+    # Source users may already have imported force fields at this data path.
+    shopt -s nullglob dotglob
+    existing_entries=("$INSTALL_DIR"/*)
+    shopt -u nullglob dotglob
+    if [ "${#existing_entries[@]}" -ne 1 ] ||
+       [ ! -d "$INSTALL_DIR/forcefields" ] || [ -L "$INSTALL_DIR/forcefields" ]; then
     cat >&2 <<MSG
 ERROR: $INSTALL_DIR already exists and was not created by this installer.
 Set MOLDYNSTUDIO_INSTALL_DIR to another path or move the existing directory.
 MSG
     exit 1
+    fi
   fi
-  rm -rf "$INSTALL_DIR"
 fi
+# Overlay shipped files, preserving imported forcefields and other user data.
+# ponytail: Obsolete shipped files remain until a future version adds a manifest.
 mkdir -p "$INSTALL_DIR"
 tar -xzf "$tmp_dir/payload.tar.gz" -C "$INSTALL_DIR"
 touch "$INSTALL_DIR/.moldynstudio-install"
@@ -150,12 +158,20 @@ exec $quoted_install_dir/.venv/bin/python $quoted_install_dir/main.py "\$@"
 LAUNCHER
 chmod +x "$LAUNCHER"
 
+desktop_exec="$("$PYTHON_BIN" - "$LAUNCHER" <<'PY'
+import sys
+value = sys.argv[1].replace('%', '%%')
+value = ''.join(('\\' + char) if char in '\\"$`' else char for char in value)
+value = value.replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+print('"' + value + '"')
+PY
+)"
 cat > "$DESKTOP_FILE" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=MolDynStudio
 Comment=Desktop GUI for molecular dynamics setup, execution, and analysis
-Exec=$LAUNCHER
+Exec=$desktop_exec
 Icon=$INSTALL_DIR/assets/logo_512.png
 Terminal=false
 Categories=Science;Education;

@@ -64,9 +64,9 @@ def validate_gro(path: str | Path) -> ValidationResult:
         if len(atom_line) < 44:
             return ValidationResult(False, f"GRO atom line {index} is truncated.")
         try:
-            float(atom_line[20:28])
-            float(atom_line[28:36])
-            float(atom_line[36:44])
+            coordinates = [float(atom_line[start:start + 8]) for start in (20, 28, 36)]
+            if not all(math.isfinite(value) for value in coordinates):
+                raise ValueError("non-finite coordinate")
         except ValueError:
             return ValidationResult(False, f"GRO atom line {index} has invalid coordinates.")
     box = lines[2 + atom_count].split()
@@ -76,6 +76,8 @@ def validate_gro(path: str | Path) -> ValidationResult:
         values = [float(value) for value in box]
     except ValueError:
         return ValidationResult(False, "GRO box contains invalid numeric values.")
+    if not all(math.isfinite(value) for value in values):
+        return ValidationResult(False, "GRO box values must be finite.")
     if any(value <= 0 for value in values[:3]):
         return ValidationResult(False, "GRO box dimensions must be positive.")
     return ValidationResult(True, "GRO structure is valid.")
