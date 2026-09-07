@@ -77,10 +77,10 @@ class AnalysisTab(MolDynBasePage):
         left_layout.addWidget(tools)
 
         buttons = QHBoxLayout()
-        run = QPushButton("Run Selected")
+        run = QPushButton("Preview Selected")
         run.clicked.connect(self.run_selected_preview)
         buttons.addWidget(run)
-        mmpbsa = QPushButton("Run MM-PBSA / MM-GBSA")
+        mmpbsa = QPushButton("Configure MM-PBSA / MM-GBSA")
         mmpbsa.clicked.connect(self.open_mmpbsa_dialog)
         buttons.addWidget(mmpbsa)
         viewer = QPushButton("Open Trajectory Viewer")
@@ -117,12 +117,15 @@ class AnalysisTab(MolDynBasePage):
     def run_selected_preview(self) -> None:
         selected = self.selected_analyses()
         self.results.append("Selected analyses: " + (", ".join(selected) if selected else "none"))
-        self.results.append("Execution backends are wired as lazy wrappers and will report missing packages at run time.")
+        self.results.append("Selection preview only. No analysis was executed.")
         self.request_log.emit("Analysis preview prepared.")
 
     def open_mmpbsa_dialog(self) -> None:
         dialog = MMPBSADialog(self)
-        dialog.run_requested.connect(lambda options: self.results.append(f"Prepared {options.method} with frames {options.startframe}-{options.endframe}."))
+        dialog.input_previewed.connect(lambda options: self.results.append(
+            f"{options.method} input preview generated for frames "
+            f"{options.startframe}-{options.endframe}. No analysis was executed."
+        ))
         dialog.exec_()
 
     def open_trajectory_viewer(self) -> None:

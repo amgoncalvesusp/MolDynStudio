@@ -24,7 +24,7 @@ from utils.tooltips import tooltip
 
 
 class MMPBSADialog(QDialog):
-    run_requested = pyqtSignal(object)
+    input_previewed = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -93,8 +93,9 @@ class MMPBSADialog(QDialog):
         preview_button = QPushButton("Preview Input File")
         preview_button.clicked.connect(self.refresh_preview)
         row.addWidget(preview_button)
-        run_button = QPushButton("Run")
-        run_button.clicked.connect(self._emit_run)
+        run_button = QPushButton("Generate Input Preview")
+        run_button.setToolTip("Generate configuration text only; no analysis is executed.")
+        run_button.clicked.connect(self._emit_preview)
         row.addWidget(run_button)
         row.addStretch(1)
         layout.addLayout(row)
@@ -120,7 +121,6 @@ class MMPBSADialog(QDialog):
     def refresh_preview(self) -> None:
         self.preview.setPlainText(build_input_file(self.options()))
 
-    def _emit_run(self) -> None:
+    def _emit_preview(self) -> None:
         self.refresh_preview()
-        self.run_requested.emit(self.options())
-
+        self.input_previewed.emit(self.options())
