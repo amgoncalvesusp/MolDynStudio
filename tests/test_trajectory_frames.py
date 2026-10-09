@@ -58,7 +58,7 @@ class LaunchTests(unittest.TestCase):
             manifest.write_text("{}")
             with mock.patch("core.trajectory_frames.subprocess.Popen") as popen:
                 launch_docklens(str(binary), manifest)
-            self.assertEqual(popen.call_args.args[0], [str(binary), "--manifest", str(manifest)])
+            self.assertEqual(popen.call_args.args[0], [str(binary.resolve()), "--manifest", str(manifest.resolve())])
             self.assertIs(popen.call_args.kwargs["shell"], False)
 
     def test_missing_executable_has_actionable_error(self):
@@ -73,7 +73,7 @@ class LaunchTests(unittest.TestCase):
             manifest.write_text("{}")
             with mock.patch("core.trajectory_frames.shutil.which", return_value=str(binary)), mock.patch("core.trajectory_frames.subprocess.Popen") as popen:
                 launch_docklens("auto", manifest)
-            self.assertEqual(popen.call_args.args[0][0], str(binary))
+            self.assertEqual(popen.call_args.args[0][0], str(binary.resolve()))
 
 
 @unittest.skipUnless(importlib.util.find_spec("MDAnalysis"), "MDAnalysis is optional")
