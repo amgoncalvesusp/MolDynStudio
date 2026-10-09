@@ -1,8 +1,7 @@
 """Stage-aware execution of the real GROMACS molecular-dynamics pipeline.
 
-The service in this module owns orchestration and manifest decisions.  It is
-deliberately independent from Qt widgets; :class:`MDPipelineRunner` is only a
-thin thread-and-signals adapter for the desktop UI.
+The service owns orchestration and manifest decisions independently of Qt.
+:class:`MDPipelineRunner` adapts it to desktop threads and signals.
 """
 
 from __future__ import annotations
@@ -349,6 +348,15 @@ class MDPipelineService:
             if not validation.ok:
                 self._fail_stage(stage.name, validation.message)
                 return False
+        downstream = _DYNAMICS_STAGES[_DYNAMICS_STAGES.index(stage.name) + 1:]
+        if any(
+            self._stage_record(name).status != StageStatus.NOT_READY.value
+            or self._stage_record(name).outputs
+            for name in downstream
+        ):
+            self._invalidate_downstream(
+                stage.name, f"{stage.name.value.title()} restarted; previous downstream results are invalid."
+            )
         self._transition(
             stage.name,
             StageStatus.RUNNING,
@@ -475,10 +483,14 @@ class MDPipelineService:
                 )
         return ValidationResult(True, f"{stage.value} outputs are valid.")
 
-    @staticmethod
-    def _validate(validator: Validator, path: Path) -> ValidationResult:
+    def _validate(self, validator: Validator, path: Path) -> ValidationResult:
         try:
-            result = validator(path)
+            if validator is validate_tpr or validator is validate_checkpoint:
+                assert self._manifest is not None
+                result = validator(path, gromacs_binary=self._manifest.gromacs_binary,
+                                   conda_environment=self._manifest.conda_environment)
+            else:
+                result = validator(path)
         except Exception as exc:
             return ValidationResult(False, f"validator raised {exc}")
         if not isinstance(result, ValidationResult):

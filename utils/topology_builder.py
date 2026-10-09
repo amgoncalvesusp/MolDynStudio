@@ -33,9 +33,17 @@ from core import wsl_bridge
 CHARGE_METHODS: Mapping[str, str] = {
     "AM1-BCC": "bcc",
     "Gasteiger": "gas",
-    "RESP": "resp",
-    "Formal charge only": "user",
 }
+
+
+def acpype_charge_method(label: str) -> str:
+    """Resolve only charge calculations supported by the bundled workflow."""
+    if label not in CHARGE_METHODS:
+        raise ValueError(
+            f"Unsupported charge method {label!r}. Choose AM1-BCC or Gasteiger. "
+            "RESP fitting and imported MOL2 partial charges require a separately validated workflow."
+        )
+    return CHARGE_METHODS[label]
 
 TWO_LETTER_ELEMENTS = frozenset(
     {
@@ -66,11 +74,14 @@ class AcpypeOutputError(ValueError):
 
 @dataclass(frozen=True)
 class LigandTopologyArtifacts:
-    """Canonical ligand files produced by ACPYPE."""
+    """Canonical ligand files and optional validated CHARMM provenance."""
 
     ligand_gro: Path
     ligand_itp: Path
     ligand_posre_itp: Path | None = None
+    parameter_includes: tuple[Path, ...] = ()
+    provenance_path: Path | None = None
+    molecule_count: int = 1
 
     @property
     def gro(self) -> Path:
@@ -238,7 +249,7 @@ def normalize_acpype_outputs(acpype_dir: str | Path, project_dir: str | Path) ->
         normalized_itp = _rewrite_restraint_include(
             itp.read_text(encoding="utf-8"), out_posre.name
         )
-        out_itp.write_text(normalized_itp, encoding="utf-8")
+        out_itp.write_text(normalized_itp, encoding="utf-8", newline="\n")
         shutil.copyfile(posres[0], out_posre)
     else:
         shutil.copyfile(itp, out_itp)
@@ -384,17 +395,18 @@ class LigandParamWorker(QThread):
         p = self.p
         try:
             validate_acpype_input(p.ligand_path)
-        except (OSError, UnsupportedLigandChemistryError) as exc:
+            cm = acpype_charge_method(p.charge_method)
+        except (OSError, ValueError) as exc:
             self.done.emit(False, str(exc))
             return
 
         wsl_lig = wsl_bridge.win_to_wsl(p.ligand_path)
-        cm = CHARGE_METHODS.get(p.charge_method, "bcc")
 
         cmd = [
             "acpype",
             "-i", wsl_lig,
             "-c", cm,
+            "-a", "gaff2",
             "-n", str(int(p.net_charge)),
             "-b", p.base_name,
             "-o", "gmx",

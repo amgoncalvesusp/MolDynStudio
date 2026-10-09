@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import json
 import sys
+from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
+from uuid import uuid4
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
+from PyQt5.QtGui import QColor, QDesktopServices, QIcon, QKeySequence, QPalette
 from PyQt5.QtWidgets import (
     QAction,
     QApplication,
@@ -54,29 +57,17 @@ from core.project_manager import (
     is_windows_absolute_path,
 )
 from core.settings import SettingsStore
+from core.evidence_bundle import export_evidence_bundle
 from settings_dialog import SettingsDialog
 from tabs.analysis_tab import AnalysisTab
 from tabs.md_run_tab import MDRunTab
 from tabs.md_setup_tab import MDSetupTab
 from tabs.qc_dashboard_tab import QCDashboardWidget
 from windows.help_dialog import HelpDialog
-from core.matplotlib_qt import configure_pyqt5_backend, is_pyqt5_widget_type
-
-try:
-    configure_pyqt5_backend()
-    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.figure import Figure
-    if not is_pyqt5_widget_type(FigureCanvas):
-        raise ImportError("Matplotlib selected a non-PyQt5 Qt binding")
-    MATPLOTLIB_OK = True
-except Exception:
-    MATPLOTLIB_OK = False
-    FigureCanvas = object  # type: ignore[misc,assignment]
-    Figure = object  # type: ignore[misc,assignment]
 
 
 APP_NAME = "MolDynStudio"
-APP_VERSION = "v1.1.1"
+APP_VERSION = "v1.2.0"
 APP_INVENTOR = "Adriano Marques Gonçalves (UNIARA)"
 
 NAV_ITEMS = [
@@ -107,8 +98,11 @@ class FileSelector(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self.line_edit = QLineEdit()
         self.line_edit.setPlaceholderText(title)
+        self.line_edit.setAccessibleName(title)
+        self.setFocusProxy(self.line_edit)
         layout.addWidget(self.line_edit)
         self.button = QPushButton("Browse")
+        self.button.setAccessibleName(f"Browse for {title}")
         self.button.clicked.connect(self.browse)
         layout.addWidget(self.button)
 
@@ -134,8 +128,11 @@ class DirSelector(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self.line_edit = QLineEdit()
         self.line_edit.setPlaceholderText(title)
+        self.line_edit.setAccessibleName(title)
+        self.setFocusProxy(self.line_edit)
         layout.addWidget(self.line_edit)
         self.button = QPushButton("Browse")
+        self.button.setAccessibleName(f"Browse for {title}")
         self.button.clicked.connect(self.browse)
         layout.addWidget(self.button)
 
@@ -149,36 +146,6 @@ class DirSelector(QWidget):
 
     def setText(self, text: str):
         self.line_edit.setText(text)
-
-
-class PlotPanel(QWidget):
-    def __init__(self):
-        super().__init__()
-        layout = QVBoxLayout(self)
-        if MATPLOTLIB_OK:
-            self.figure = Figure(figsize=(6, 4))
-            self.canvas = FigureCanvas(self.figure)
-            layout.addWidget(self.canvas)
-            self.draw_demo()
-        else:
-            label = QLabel("Matplotlib is not available. Install matplotlib to preview charts here.")
-            label.setWordWrap(True)
-            layout.addWidget(label)
-
-    def draw_demo(self):
-        if not MATPLOTLIB_OK:
-            return
-        ax = self.figure.add_subplot(111)
-        x = list(range(10))
-        y = [0.30, 0.36, 0.32, 0.28, 0.27, 0.31, 0.29, 0.26, 0.25, 0.24]
-        ax.clear()
-        ax.plot(x, y, linewidth=2)
-        ax.set_title("Demo RMSD preview")
-        ax.set_xlabel("Frame index")
-        ax.set_ylabel("RMSD (nm)")
-        ax.grid(True, alpha=0.3)
-        self.figure.tight_layout()
-        self.canvas.draw_idle()
 
 
 class BasePage(QWidget):
@@ -259,7 +226,7 @@ class BasePage(QWidget):
                 widget.setText(str(value))
 
     def preview_text(self) -> str:
-        return f"[{self.title}] No preview text implemented yet."
+        return f"[{self.title}] Use this page's controls to load and inspect existing results."
 
     def action_bar(self, include_preview: bool = True) -> QWidget:
         frame = QFrame()
@@ -267,12 +234,9 @@ class BasePage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addStretch(1)
         if include_preview:
-            preview = QPushButton("Preview")
+            preview = QPushButton("Preview configuration")
             preview.clicked.connect(lambda: self.request_preview.emit(self.preview_text()))
             layout.addWidget(preview)
-        run = QPushButton("Run This Module")
-        run.clicked.connect(lambda: self.request_log.emit(f"Queued module: {self.title}"))
-        layout.addWidget(run)
         return frame
 
 
@@ -280,7 +244,7 @@ class ProjectPage(BasePage):
     def __init__(self):
         super().__init__(
             "Project",
-            "Create a new analysis session, define the project type, and choose the default operating mode.",
+            "Save your workspace, then prepare a system in MD Setup or load an existing trajectory in Load System.",
         )
         group, layout = self.add_group("Project Settings")
         form = QFormLayout()
@@ -294,7 +258,7 @@ class ProjectPage(BasePage):
         form.addRow("Working directory", self.fields["working_dir"])
 
         self.fields["project_type"] = QComboBox()
-        self.fields["project_type"].addItems(["Protein", "Proteinâ€“Ligand"])
+        self.fields["project_type"].addItems(["Protein", "Protein-Ligand"])
         form.addRow("Project type", self.fields["project_type"])
 
         self.fields["force_field_family"] = QComboBox()
@@ -305,21 +269,21 @@ class ProjectPage(BasePage):
         self.fields["analysis_mode"].addItems(["Simple", "Advanced"])
         form.addRow("Analysis mode", self.fields["analysis_mode"])
 
-        bundle_group, bundle_layout = self.add_group("Quick Start Templates")
+        bundle_group, bundle_layout = self.add_group("Planning presets")
         self.fields["template"] = QComboBox()
         self.fields["template"].addItems([
             "Protein Quick Stability",
             "Protein Full Stability",
-            "Proteinâ€“Ligand Binding Check",
-            "Proteinâ€“Ligand Quick MM/GBSA",
-            "Proteinâ€“Ligand Refined MM/PBSA",
+            "Protein-Ligand Binding Check",
+            "Protein-Ligand Quick MM/GBSA",
+            "Protein-Ligand Refined MM/PBSA",
             "Solvation Around Ligand",
             "Ligand Batch Ranking",
         ])
         bundle_layout.addWidget(self.fields["template"])
         hint = QLabel(
-            "Typical default: Protein projects start with preprocessing + structural stability + energy. "
-            "Proteinâ€“ligand projects usually add interaction analysis and optional quick MM/GBSA."
+            "These planning preferences are saved with the session. They do not run analyses or change the MD protocol. "
+            "Next: open MD Setup for a new simulation, or Load System for existing MD files."
         )
         hint.setWordWrap(True)
         bundle_layout.addWidget(hint)
@@ -338,11 +302,14 @@ class ProjectPage(BasePage):
 
 
 class LoadSystemPage(BasePage):
+    inputs_ready = pyqtSignal(object)
+
     def __init__(self):
         super().__init__(
             "Load System",
             "Load the main GROMACS files. TPR is required; trajectory and energy files are strongly recommended.",
         )
+        self.operation_blocked = lambda: False
         group, layout = self.add_group("Input Files")
         form = QFormLayout()
         layout.addLayout(form)
@@ -372,23 +339,23 @@ class LoadSystemPage(BasePage):
         self.summary.setMinimumHeight(120)
         self.summary.setPlainText(
             "Validation summary will appear here.\n\n"
-            "Typical proteinâ€“ligand setup:\n"
+            "Typical protein-ligand setup:\n"
             "- TPR\n- Processed XTC\n- EDR\n- Optional NDX\n"
         )
         summary_layout.addWidget(self.summary)
 
         button_row = QHBoxLayout()
-        validate_btn = QPushButton("Validate Inputs")
+        validate_btn = QPushButton("Validate and use inputs")
         validate_btn.clicked.connect(self.validate_inputs)
         button_row.addWidget(validate_btn)
-        preview_btn = QPushButton("Preview Groups")
-        preview_btn.clicked.connect(lambda: self.request_log.emit("Group preview is a placeholder in the prototype."))
-        button_row.addWidget(preview_btn)
         summary_layout.addLayout(button_row)
 
         self.body_layout.addWidget(self.action_bar())
 
     def validate_inputs(self):
+        if self.operation_blocked():
+            self.summary.setPlainText("Wait for the current operation to finish before changing analysis inputs.")
+            return
         messages: List[str] = []
         tpr = self.fields["tpr_file"].text()
         traj = self.fields["trajectory_file"].text()
@@ -396,12 +363,21 @@ class LoadSystemPage(BasePage):
         ndx = self.fields["index_file"].text()
         ligand = self.fields["ligand_name"].text().strip()
 
-        messages.append(f"TPR: {'OK' if tpr else 'Missing'}")
-        messages.append(f"Trajectory: {'OK' if traj else 'Missing'}")
-        messages.append(f"Energy: {'OK' if edr else 'Missing'}")
-        messages.append(f"Index: {'OK' if ndx else 'Optional / not loaded'}")
+        valid = True
+        for label, value, required in (("TPR", tpr, True), ("Trajectory", traj, True), ("Energy", edr, False), ("Index", ndx, False)):
+            if not value:
+                messages.append(f"{label}: {'Required; select a file' if required else 'Optional / not loaded'}")
+                valid = valid and not required
+            elif not Path(value).expanduser().is_file():
+                messages.append(f"{label}: file not found - {value}")
+                valid = False
+            else:
+                messages.append(f"{label}: file found")
         messages.append(f"Ligand hint: {ligand if ligand else 'Not provided'}")
-        messages.append("\nRecommendation: load TPR + XTC + EDR before running any analysis bundle.")
+        messages.append("\nFile existence checked. Scientific compatibility is checked by each analysis backend.")
+        if valid:
+            self.inputs_ready.emit({"topology": tpr, "trajectory": traj, "energy": edr})
+            messages.append("Inputs sent to Analysis. Next: choose an analysis or open the trajectory viewer.")
         self.summary.setPlainText("\n".join(messages))
         self.request_log.emit("Load System validation finished.")
 
@@ -472,7 +448,7 @@ class PreprocessingPage(BasePage):
         form.addRow("Output trajectory name", self.fields["output_name"])
 
         help_label = QLabel(
-            "Typical default for proteinâ€“ligand analysis: remove PBC jumps + center molecule + compact unit cell + backbone fit."
+            "Typical default for protein-ligand analysis: remove PBC jumps + center molecule + compact unit cell + backbone fit."
         )
         help_label.setWordWrap(True)
         form_layout.addWidget(help_label)
@@ -568,7 +544,7 @@ class FreeEnergyPage(BasePage):
     def __init__(self):
         super().__init__(
             "End-Point Free Energy",
-            "Configure gmx_MMPBSA runs for MM/GBSA and MM/PBSA. Use GB for fast ranking and PB for refinement or cross-checking.",
+            "Plan MM/GBSA and MM/PBSA sampling. Compare methods and sampling assumptions before interpreting binding-energy estimates.",
         )
         mode_group, mode_layout = self.add_group("Calculation mode")
         form = QFormLayout()
@@ -621,8 +597,8 @@ class FreeEnergyPage(BasePage):
 
         notes_group, notes_layout = self.add_group("Snapshot guidance")
         notes = QLabel(
-            "Quick = ~100 frames for rapid ranking. Standard = ~200 frames for stronger estimates. "
-            "Refined = ~1000 frames for detailed decomposition or final reporting. Keep the same window and interval when comparing ligands."
+            "Quick, Standard, and Refined select approximately 100, 200, and 1000 frames. "
+            "Frame count alone does not establish convergence or ranking reliability. Choose an equilibrated window and assess uncertainty across independent runs."
         )
         notes.setWordWrap(True)
         notes_layout.addWidget(notes)
@@ -692,15 +668,12 @@ class BatchComparisonPage(BasePage):
         remove_btn = QPushButton("Remove selected")
         remove_btn.clicked.connect(self.remove_row)
         button_row.addWidget(remove_btn)
-        autodetect_btn = QPushButton("Add demo runs")
-        autodetect_btn.clicked.connect(self.add_demo_rows)
-        button_row.addWidget(autodetect_btn)
         table_layout.addLayout(button_row)
 
         metrics_group, metrics_layout = self.add_group("Metrics")
         metrics = [
             "RMSD", "RMSF", "Radius of gyration", "SASA", "H-bond occupancy",
-            "Contact frequency", "Distances", "Energy terms", "Total Î”G", "Per-residue Î”G"
+            "Contact frequency", "Distances", "Energy terms", "Total Delta G", "Per-residue Delta G"
         ]
         grid = QGridLayout()
         metrics_layout.addLayout(grid)
@@ -731,19 +704,9 @@ class BatchComparisonPage(BasePage):
         enabled = QTableWidgetItem("Yes")
         enabled.setCheckState(Qt.Checked)
         self.runs_table.setItem(row, 0, enabled)
-        values = data or [f"Run_{row+1}", "", "Proteinâ€“Ligand", "LIG", "Ready"]
+        values = data or [f"Run_{row+1}", "", "Protein-Ligand", "LIG", "Ready"]
         for col, value in enumerate(values, start=1):
             self.runs_table.setItem(row, col, QTableWidgetItem(value))
-
-    def add_demo_rows(self):
-        demos = [
-            ["Ligand_A", "/projects/ligA", "Proteinâ€“Ligand", "LGA", "Ready"],
-            ["Ligand_B", "/projects/ligB", "Proteinâ€“Ligand", "LGB", "Ready"],
-            ["Ligand_C", "/projects/ligC", "Proteinâ€“Ligand", "LGC", "Missing EDR"],
-        ]
-        for row in demos:
-            self.add_row(row)
-        self.request_log.emit("Demo comparison rows added.")
 
     def remove_row(self):
         current = self.runs_table.currentRow()
@@ -794,46 +757,16 @@ class ResultsViewerPage(BasePage):
     def __init__(self):
         super().__init__(
             "Results Viewer",
-            "Inspect plots, tables, residue maps, and a compact dashboard. This is a prototype viewer with demo content.",
+            "Inspect measured time series from XVG or CSV files. Load existing results or generate QC outputs from Analysis.",
         )
         self.tabs = QTabWidget()
         self.body_layout.addWidget(self.tabs, 1)
-
-        plots_tab = QWidget()
-        plots_layout = QVBoxLayout(plots_tab)
-        plots_layout.addWidget(PlotPanel())
-        self.tabs.addTab(plots_tab, "Plots")
-
-        tables_tab = QWidget()
-        tables_layout = QVBoxLayout(tables_tab)
-        table = QTableWidget(5, 3)
-        table.setHorizontalHeaderLabels(["Metric", "Average", "Std. Dev."])
-        rows = [
-            ("RMSD", "0.28", "0.04"),
-            ("Rg", "2.13", "0.03"),
-            ("SASA", "145.2", "4.1"),
-            ("H-bonds", "3.8", "1.1"),
-            ("Î”G", "-32.5", "2.8"),
-        ]
-        for i, row in enumerate(rows):
-            for j, value in enumerate(row):
-                table.setItem(i, j, QTableWidgetItem(value))
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        tables_layout.addWidget(table)
-        self.tabs.addTab(tables_tab, "Tables")
-
-        residue_tab = QWidget()
-        residue_layout = QVBoxLayout(residue_tab)
-        residue_layout.addWidget(QLabel("Residue map view placeholder. Future versions can color-code RMSF, contacts, or Î”G decomposition."))
-        self.tabs.addTab(residue_tab, "Residue Maps")
 
         self.dashboard_tab = QWidget()
         dashboard_layout = QVBoxLayout(self.dashboard_tab)
         self.qc_dashboard = QCDashboardWidget()
         dashboard_layout.addWidget(self.qc_dashboard)
-        self.tabs.addTab(self.dashboard_tab, "Dashboard")
-
-        self.body_layout.addWidget(self.action_bar())
+        self.tabs.addTab(self.dashboard_tab, "QC Dashboard")
 
     def load_qc_files(self, paths: object) -> None:
         file_paths = [str(path) for path in paths]
@@ -845,82 +778,114 @@ class ResultsViewerPage(BasePage):
             self.tabs.setCurrentIndex(dashboard_index)
 
 
+class EvidenceExportWorker(QThread):
+    done = pyqtSignal(bool, str)
+
+    def __init__(self, project: Path, destination: Path, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self.destination = destination
+
+    def run(self):
+        try:
+            archive = export_evidence_bundle(self.project, self.destination)
+        except Exception as exc:
+            self.done.emit(False, str(exc))
+        else:
+            self.done.emit(True, str(archive))
+
+
 class ReportsPage(BasePage):
-    def __init__(self):
+    def __init__(self, project_provider=None):
         super().__init__(
             "Reports & Export",
-            "Create quick reports, full reports, figure packs, or raw data bundles.",
+            "Export an auditable evidence bundle from a prepared project. Files and checksums record what was actually run.",
         )
-        group, layout = self.add_group("Report options")
-        for key, text, checked in [
-            ("quick_report", "Quick report", True),
-            ("full_report", "Full report", False),
-            ("publication_figures", "Publication figure pack", True),
-            ("raw_data_bundle", "Raw data bundle", True),
-        ]:
-            cb = QCheckBox(text)
-            cb.setChecked(checked)
-            self.fields[key] = cb
-            layout.addWidget(cb)
-
+        self.project_provider = project_provider or (lambda: None)
+        self.operation_blocked = lambda: False
+        self._worker = None
+        group, layout = self.add_group("Reproducibility export")
+        description = QLabel("Bundle existing run metadata, protocol files, logs, and analysis evidence. Large trajectory files remain in the project; the bundle records their identity. Review the generated inventory before sharing.")
+        description.setWordWrap(True)
+        layout.addWidget(description)
         form = QFormLayout()
-        self.fields["export_format"] = QComboBox()
-        self.fields["export_format"].addItems(["PDF", "CSV", "XLSX", "PNG", "SVG", "JSON session file"])
-        form.addRow("Primary export format", self.fields["export_format"])
         self.fields["export_dir"] = DirSelector("Export directory")
         self.fields["export_dir"].setText(str(Path.home() / "gromacs_analysis_exports"))
         form.addRow("Export directory", self.fields["export_dir"])
         layout.addLayout(form)
-        self.body_layout.addWidget(self.action_bar())
+        self.export_button = QPushButton("Export evidence bundle")
+        self.export_button.setObjectName("PrimaryAction")
+        self.export_button.clicked.connect(self.export_bundle)
+        layout.addWidget(self.export_button)
+        self.status = QLabel("Prepare or reopen an MD project to export its evidence.")
+        self.status.setWordWrap(True)
+        self.status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.status)
+        self.body_layout.addStretch(1)
+
+    def export_bundle(self) -> None:
+        if self.is_busy() or self.operation_blocked():
+            self.status.setText("Wait for the current operation to finish before exporting evidence.")
+            return
+        project = self.project_provider()
+        destination = self.fields["export_dir"].text()
+        if project is None or not destination:
+            self.status.setText("Select a prepared project and an export directory first.")
+            return
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        target = Path(destination) / f"moldynstudio_evidence_{stamp}_{uuid4().hex[:8]}.zip"
+        self._worker = EvidenceExportWorker(Path(project), target, self)
+        self._worker.done.connect(self._export_finished)
+        self._worker.finished.connect(lambda: self.export_button.setEnabled(True))
+        self.export_button.setEnabled(False)
+        self.status.setText("Exporting evidence and hashing source files. Large trajectories can take time.")
+        self._worker.start()
+
+    def is_busy(self) -> bool:
+        return self._worker is not None and self._worker.isRunning()
+
+    def _export_finished(self, ok: bool, message: str) -> None:
+        self.status.setText(f"Evidence bundle saved: {message}" if ok else f"Export failed: {message}")
+        self.request_log.emit(self.status.text())
 
     def preview_text(self) -> str:
-        selected = [
-            widget.text() for widget in self.fields.values()
-            if isinstance(widget, QCheckBox) and widget.isChecked()
-        ]
         return (
-            "[Reports & Export Preview]\n"
-            f"Selected outputs: {', '.join(selected) if selected else 'None'}\n"
-            f"Primary format: {self.fields['export_format'].currentText()}\n"
+            "[Evidence bundle]\n"
+            f"Project: {self.project_provider() or 'No prepared project loaded'}\n"
             f"Export directory: {self.fields['export_dir'].text()}"
         )
 
 
 class SettingsPage(BasePage):
-    def __init__(self):
+    def __init__(self, settings: SettingsStore, open_preferences):
         super().__init__(
             "Settings",
-            "Configure executable paths and default plotting/export behavior. The interface language is fixed to English in this prototype.",
+            "Set shared tool paths and runtime defaults. Changes apply to the next operation.",
         )
-        group, layout = self.add_group("Executable paths")
-        form = QFormLayout()
-        layout.addLayout(form)
-        self.fields["gmx_path"] = FileSelector("Path to gmx executable", "All Files (*)")
-        form.addRow("gmx path", self.fields["gmx_path"])
-        self.fields["gmx_mmpbsa_path"] = FileSelector("Path to gmx_MMPBSA executable", "All Files (*)")
-        form.addRow("gmx_MMPBSA path", self.fields["gmx_mmpbsa_path"])
+        self.settings = settings
+        group, layout = self.add_group("Preferences")
+        self.summary = QLabel()
+        self.summary.setWordWrap(True)
+        self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.summary)
+        button = QPushButton("Open preferences")
+        button.setObjectName("PrimaryAction")
+        button.clicked.connect(open_preferences)
+        layout.addWidget(button)
+        self.body_layout.addStretch(1)
+        self.refresh()
 
-        ui_group, ui_layout = self.add_group("Defaults")
-        self.fields["theme"] = QComboBox()
-        self.fields["theme"].addItems(["Dark", "Light"])
-        self.fields["theme"].setCurrentText("Dark")
-        ui_layout.addWidget(QLabel("Theme"))
-        ui_layout.addWidget(self.fields["theme"])
-
-        self.fields["default_selection"] = QComboBox()
-        self.fields["default_selection"].addItems(["Protein", "Backbone", "Protein + ligand"])
-        ui_layout.addWidget(QLabel("Default analysis selection"))
-        ui_layout.addWidget(self.fields["default_selection"])
-
-        self.body_layout.addWidget(self.action_bar())
+    def refresh(self) -> None:
+        self.summary.setText(self.preview_text())
 
     def preview_text(self) -> str:
         return (
-            "[Settings Preview]\n"
-            f"gmx: {self.fields['gmx_path'].text() or 'Not set'}\n"
-            f"gmx_MMPBSA: {self.fields['gmx_mmpbsa_path'].text() or 'Not set'}\n"
-            f"Theme: {self.fields['theme'].currentText()}\n"
-            f"Default selection: {self.fields['default_selection'].currentText()}"
+            f"GROMACS: {self.settings.value('gromacs_binary')}\n"
+            f"CPPTRAJ: {self.settings.value('cpptraj_binary')}\n"
+            f"DockLens: {self.settings.value('docklens_binary')}\n"
+            f"Conda environment: {self.settings.value('conda_environment')}\n"
+            f"CPU cores: {self.settings.value('cores')} | GPU: {self.settings.value('gpu_mode')}\n"
+            "Interface: English | Theme: Light"
         )
 
 
@@ -943,13 +908,17 @@ class MainWindow(QMainWindow):
         if logo_path.exists():
             self.setWindowIcon(QIcon(str(logo_path)))
         self._build_ui()
+        self._initial_page_states = deepcopy({name: page.get_state() for name, page in self.pages.items()})
         self._autosave_timer.start(5 * 60 * 1000)
         self.statusBar().showMessage(
             "MolDynStudio ready. Configure MD setup, run GROMACS MD, "
-            "or inspect analysis previews."
+            "or load an existing trajectory for analysis."
         )
 
     def _apply_style(self):
+        palette = self.palette()
+        palette.setColor(QPalette.PlaceholderText, QColor("#666666"))
+        self.setPalette(palette)
         self.setStyleSheet(
             """
             QMainWindow { background: #F5F5F5; }
@@ -970,7 +939,11 @@ class MainWindow(QMainWindow):
                 border-radius: 3px;
                 padding: 6px;
                 selection-background-color: #FFF3E0;
+                selection-color: #2C2C2C;
             }
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
+            QTextEdit:focus, QTableWidget:focus, QPushButton:focus { border: 2px solid #9A470D; }
+            QLabel#CapabilityNote { color: #704111; background: #FFF3E0; padding: 10px; }
             QPushButton {
                 background: #FFFFFF;
                 border: 1px solid #DCDCDC;
@@ -980,7 +953,10 @@ class MainWindow(QMainWindow):
                 color: #2C2C2C;
             }
             QPushButton:hover { background: #FFF3E0; border-color: #E87722; }
-            QPushButton:disabled { color: #BDBDBD; }
+            QPushButton:pressed { background: #F5DFC7; }
+            QPushButton:disabled { color: #666666; background: #F1F1F1; }
+            QPushButton#PrimaryAction { background: #9A470D; color: #FFFFFF; border-color: #9A470D; }
+            QPushButton#PrimaryAction:hover { background: #7C3708; }
             QListWidget {
                 background: #FFFFFF;
                 border: none;
@@ -991,7 +967,8 @@ class MainWindow(QMainWindow):
                 border-radius: 3px;
                 margin: 2px 0;
             }
-            QListWidget::item:selected { background: #FFF3E0; border-left: 3px solid #E87722; }
+            QListWidget::item:selected { background: #FFF3E0; color: #703509; font-weight: 700; }
+            QListWidget::item:focus { border: 1px solid #9A470D; }
             QToolBar { background: #FFFFFF; spacing: 8px; border-bottom: 1px solid #DCDCDC; }
             QMenuBar { background: #FFFFFF; border-bottom: 1px solid #DCDCDC; }
             QMenuBar::item:selected, QMenu::item:selected { background: #FFF3E0; }
@@ -1022,9 +999,11 @@ class MainWindow(QMainWindow):
         outer.addWidget(splitter, 1)
 
         self.nav = QListWidget()
-        self.nav.setMinimumWidth(230)
+        self.nav.setMinimumWidth(190)
+        self.nav.setAccessibleName("Workflow pages")
         for item in NAV_ITEMS:
-            QListWidgetItem(item, self.nav)
+            nav_item = QListWidgetItem(item, self.nav)
+            nav_item.setToolTip(self.context_text(item))
         self.nav.currentRowChanged.connect(self._switch_page)
         splitter.addWidget(self.nav)
 
@@ -1040,7 +1019,8 @@ class MainWindow(QMainWindow):
 
         self.side_info = QTextEdit()
         self.side_info.setReadOnly(True)
-        self.side_info.setMinimumWidth(320)
+        self.side_info.setMinimumWidth(210)
+        self.side_info.setAccessibleName("Workflow guidance")
         self.side_info.setPlainText(
             "Recommendations\n\n"
             "- Start in MD Setup to generate MDP files and validate inputs\n"
@@ -1048,16 +1028,21 @@ class MainWindow(QMainWindow):
             "- Use Analysis for RMSD/RMSF/SASA/PCA/MM-PBSA workflows\n"
         )
         content_wrapper.addWidget(self.side_info)
-        content_wrapper.setStretchFactor(0, 1)
+        content_wrapper.setStretchFactor(0, 4)
+        content_wrapper.setStretchFactor(1, 1)
+        content_wrapper.setSizes([850, 250])
 
-        log_group = QGroupBox("Run Log")
-        log_layout = QVBoxLayout(log_group)
+        self.log_group = QGroupBox("Run log")
+        log_layout = QVBoxLayout(self.log_group)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(170)
+        self.log.setMinimumHeight(90)
+        self.log.document().setMaximumBlockCount(5000)
+        self.log.setAccessibleName("Application run log")
         log_layout.addWidget(self.log)
-        main_splitter.addWidget(log_group)
+        main_splitter.addWidget(self.log_group)
         main_splitter.setStretchFactor(0, 1)
+        main_splitter.setSizes([650, 130])
 
         self.pages: Dict[str, BasePage] = {}
         self._add_page("Project", ProjectPage())
@@ -1066,8 +1051,17 @@ class MainWindow(QMainWindow):
         setup_page = self.pages["MD Setup"]
         if isinstance(setup_page, MDSetupTab):
             setup_page.project_prepared.connect(self._on_project_prepared)
-        self._add_page("Analysis", AnalysisTab())
-        self._add_page("Load System", LoadSystemPage())
+            setup_page.operation_blocked = lambda: self._work_in_progress(exclude="MD Setup")
+        run_page = self.pages["MD Run"]
+        run_page.operation_blocked = lambda: self._work_in_progress(exclude="MD Run")
+        run_page.production_completed.connect(self._on_production_completed)
+        analysis_page = AnalysisTab(settings=self.settings)
+        analysis_page.operation_blocked = lambda: self._work_in_progress(exclude="Analysis")
+        self._add_page("Analysis", analysis_page)
+        load_page = LoadSystemPage()
+        load_page.operation_blocked = self._work_in_progress
+        load_page.inputs_ready.connect(self._on_analysis_inputs)
+        self._add_page("Load System", load_page)
         self._add_page("Trajectory Preprocessing", PreprocessingPage())
         self._add_page(
             "Structural Stability",
@@ -1085,7 +1079,7 @@ class MainWindow(QMainWindow):
                 "Interaction Analysis",
                 "Track hydrogen bonds, distances, contacts, and salt bridges over time.",
                 ["Hydrogen bonds", "Salt bridges", "Distances", "Contacts", "Minimum distance", "Pairwise distance map"],
-                "Suggested for proteinâ€“ligand systems: H-bonds + Contacts + Distances.",
+                "Suggested for protein-ligand systems: H-bonds + Contacts + Distances.",
                 ["Protein vs Ligand", "Binding site vs Ligand", "Chain A vs Chain B", "Custom selection"],
             ),
         )
@@ -1112,47 +1106,56 @@ class MainWindow(QMainWindow):
         self._add_page("End-Point Free Energy", FreeEnergyPage())
         self._add_page("Batch Comparison", BatchComparisonPage())
         self._add_page("Results Viewer", ResultsViewerPage())
-        self._add_page("Reports & Export", ReportsPage())
-        self._add_page("Settings", SettingsPage())
+        reports_page = ReportsPage(lambda: self.active_project_dir)
+        reports_page.operation_blocked = lambda: self._work_in_progress(exclude="Reports & Export")
+        self._add_page("Reports & Export", reports_page)
+        self._add_page("Settings", SettingsPage(self.settings, self.open_preferences))
 
         self.nav.setCurrentRow(0)
 
     def _build_menu(self):
         menu = self.menuBar()
 
-        file_menu = menu.addMenu("Arquivo")
-        new_action = QAction("Novo Projeto", self)
+        file_menu = menu.addMenu("File")
+        new_action = QAction("New project", self)
+        new_action.setShortcut(QKeySequence.New)
         new_action.triggered.connect(self.new_session)
         file_menu.addAction(new_action)
-        open_action = QAction("Abrir Projeto (.mds)", self)
+        open_action = QAction("Open project (.mds)", self)
+        open_action.setShortcut(QKeySequence.Open)
         open_action.triggered.connect(self.load_session)
         file_menu.addAction(open_action)
-        save_action = QAction("Salvar Projeto", self)
+        save_action = QAction("Save project", self)
+        save_action.setShortcut(QKeySequence.Save)
         save_action.triggered.connect(self.save_session)
         file_menu.addAction(save_action)
         file_menu.addSeparator()
-        preferences_action = QAction("Preferencias", self)
+        preferences_action = QAction("Preferences", self)
         preferences_action.triggered.connect(self.open_preferences)
         file_menu.addAction(preferences_action)
 
-        analysis_menu = menu.addMenu("Analise")
-        for name in ["MD Setup", "MD Run", "Analysis", "End-Point Free Energy", "Results Viewer"]:
+        analysis_menu = menu.addMenu("Workflow")
+        for name in ["MD Setup", "MD Run", "Load System", "Analysis", "Results Viewer", "Reports & Export"]:
             action = QAction(name, self)
             action.triggered.connect(lambda checked=False, page=name: self.switch_to_page(page))
             analysis_menu.addAction(action)
 
-        language_menu = menu.addMenu("Idioma")
-        english = QAction("English", self)
-        english.setEnabled(False)
-        language_menu.addAction(english)
-        portuguese = QAction("Portugues", self)
-        portuguese.setEnabled(False)
-        language_menu.addAction(portuguese)
+        view_menu = menu.addMenu("View")
+        for title, attribute in (("Workflow guidance", "side_info"), ("Run log", "log_group")):
+            action = QAction(title, self)
+            action.setCheckable(True)
+            action.setChecked(True)
+            action.toggled.connect(lambda visible, name=attribute: getattr(self, name).setVisible(visible))
+            view_menu.addAction(action)
 
-        help_menu = menu.addMenu("Ajuda")
-        docs_action = QAction("Documentacao", self)
+        help_menu = menu.addMenu("Help")
+        docs_action = QAction("Quick start", self)
         docs_action.triggered.connect(self.open_help)
         help_menu.addAction(docs_action)
+        manual_action = QAction("User manual", self)
+        manual_action.setShortcut(QKeySequence.HelpContents)
+        manual_action.triggered.connect(self.open_user_manual)
+        help_menu.addAction(manual_action)
 
     def _build_toolbar(self):
         toolbar = QToolBar("Main toolbar")
@@ -1173,7 +1176,7 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
-        preview_btn = QPushButton("Preview current module")
+        preview_btn = QPushButton("Review configuration")
         preview_btn.clicked.connect(self.preview_current_page)
         toolbar.addWidget(preview_btn)
 
@@ -1190,6 +1193,11 @@ class MainWindow(QMainWindow):
         page.request_log.connect(self.append_log)
         page.request_preview.connect(self.show_preview)
         page.request_qc_files.connect(self.load_qc_dashboard_files)
+        if name in {"Trajectory Preprocessing", "Structural Stability", "Interaction Analysis", "Solvent and Ions", "Energy Analysis", "End-Point Free Energy", "Batch Comparison"}:
+            note = QLabel("Configuration preview only. These options are saved with the project; this page does not execute calculations. Use Analysis for available backends.")
+            note.setObjectName("CapabilityNote")
+            note.setWordWrap(True)
+            page.body_layout.insertWidget(0, note)
         wrapper = QScrollArea()
         wrapper.setWidgetResizable(True)
         wrapper.setFrameShape(QFrame.NoFrame)
@@ -1205,6 +1213,7 @@ class MainWindow(QMainWindow):
         can_start_md = name == "MD Run"
         self.run_btn.setText("Start MD run" if can_start_md else "Run unavailable")
         self.run_btn.setEnabled(can_start_md)
+        self.run_btn.setVisible(can_start_md)
         if name == "MD Run":
             run_page = self.pages.get("MD Run")
             if isinstance(run_page, MDRunTab):
@@ -1231,28 +1240,36 @@ class MainWindow(QMainWindow):
     def open_preferences(self):
         dialog = SettingsDialog(self.settings, self)
         if dialog.exec_():
+            page = self.pages.get("Settings")
+            if isinstance(page, SettingsPage):
+                page.refresh()
             self.append_log("Preferences updated.")
 
     def open_help(self):
         HelpDialog(self).exec_()
+
+    def open_user_manual(self):
+        path = Path(__file__).resolve().parent / "assets" / "docs" / "USER_MANUAL.md"
+        if not path.is_file() or not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            self.append_log(f"Could not open the manual. Check this file: {path}")
 
     def context_text(self, name: str) -> str:
         texts = {
             "MD Setup": "Prepare proteins, ligands, force fields, solvent, ions, and MDP files before launching a run.",
             "MD Run": "Run the selected GROMACS build through minimization, NVT, NPT, and production MD. "
             "Stage outputs, checkpoints, logs, and parsed thermodynamic traces are persisted in the project folder.",
-            "Analysis": "Run post-MD analyses and open the MM-PBSA/MM-GBSA dialog or CPPTRAJ builder.",
-            "Project": "Set the project type first. Proteinâ€“ligand projects unlock the most useful interaction and free-energy workflows.",
+            "Analysis": "Load matching topology and trajectory files, then run supported structural analyses or QC. MM-PBSA/MM-GBSA and CPPTRAJ require their external tools. Next: inspect real outputs in Results Viewer.",
+            "Project": "Start here to name and save a workspace. Next: MD Setup for a new simulation, or Load System for existing files. Planning presets do not change protocols automatically.",
             "Load System": "Recommended minimum: TPR + processed trajectory. Add EDR for energy plots and NDX for custom groups.",
             "Trajectory Preprocessing": "Typical standard: center the system, remove PBC jumps, and fit the protein backbone before analysis.",
             "Structural Stability": "Common bundle: RMSD + RMSF + radius of gyration + SASA. This is often the first quality-control step.",
-            "Interaction Analysis": "Useful for proteinâ€“ligand systems: hydrogen bonds, contacts, and distances should often be run together.",
+            "Interaction Analysis": "Useful for protein-ligand systems: hydrogen bonds, contacts, and distances should often be run together.",
             "Solvent and Ions": "Best used when solvent participation matters: hydration shells, binding-site waters, or ion effects near the receptor.",
             "Energy Analysis": "Good default bundle: potential, temperature, pressure, and density from the equilibrated region.",
-            "End-Point Free Energy": "Suggested default: MM/GBSA for quick ranking. Use MM/PBSA later for refinement or a cross-check.",
+            "End-Point Free Energy": "Configure a sampling plan. Endpoint energies depend on protocol and sampling; frame count alone does not establish convergence or affinity.",
             "Batch Comparison": "Use the same time window and frame interval when comparing ligands or replicas.",
-            "Results Viewer": "This prototype viewer contains demo content. Later versions can show real outputs from XVG/CSV/MMPBSA files.",
-            "Reports & Export": "Quick report is the safest default. Full report should combine stability, interactions, energy, and free-energy summaries.",
+            "Results Viewer": "Load real XVG or CSV time series in the QC dashboard. Numeric stability flags are screening aids; inspect sampling and trajectory quality before scientific interpretation.",
+            "Reports & Export": "Export an evidence bundle from the active prepared project. Keep original trajectories and document their provenance; the bundle does not establish convergence or physical validity.",
             "Settings": "Configure the GROMACS executable, Conda environment, CPU cores, and GPU mode used by the MD pipeline.",
         }
         return f"{name}\n\n{texts.get(name, '')}"
@@ -1313,7 +1330,7 @@ class MainWindow(QMainWindow):
 
     def _on_project_prepared(self, project_dir: str, manifest_path: str) -> None:
         run_page = self.pages.get("MD Run")
-        if isinstance(run_page, MDRunTab) and run_page.is_active:
+        if self._work_in_progress(exclude="MD Setup"):
             self.append_log(
                 "Prepared project handoff ignored while the current MD run is active."
             )
@@ -1329,6 +1346,38 @@ class MainWindow(QMainWindow):
             run_page.load_project(str(project))
         self.append_log(f"Prepared MD project loaded: {project}")
 
+    def _work_in_progress(self, exclude: str = "") -> bool:
+        return any(
+            bool(page.is_busy())
+            for name, page in self.pages.items()
+            if name != exclude and callable(getattr(page, "is_busy", None))
+        )
+
+    def _on_analysis_inputs(self, inputs: object, exclude: str = "") -> bool:
+        if not isinstance(inputs, Mapping):
+            return False
+        page = self.pages.get("Analysis")
+        if page is None or self._work_in_progress(exclude=exclude):
+            self.append_log("Analysis inputs were not changed while another operation is active.")
+            return False
+        page.set_input_files(*(str(inputs.get(key, "")) for key in ("topology", "trajectory", "energy")))
+        if inputs.get("gromacs_binary") and callable(getattr(page, "set_backend", None)):
+            page.set_backend(str(inputs.get("gromacs_binary", "")), str(inputs.get("conda_environment", "")))
+        page.fields["qc_output"].setText("")
+        self.append_log("Analysis inputs loaded. Review selections before starting an analysis.")
+        return True
+
+    def _on_production_completed(self, inputs: object) -> None:
+        if not isinstance(inputs, Mapping):
+            return
+        if not self._on_analysis_inputs(inputs, exclude="MD Run"):
+            return
+        load_page = self.pages.get("Load System")
+        if isinstance(load_page, LoadSystemPage):
+            for source, target in (("topology", "tpr_file"), ("trajectory", "trajectory_file"), ("energy", "energy_file")):
+                load_page.fields[target].setText(str(inputs.get(source, "")))
+        self.append_log("Production outputs are ready in Analysis. Next: inspect the trajectory and generate QC results.")
+
     def _clear_project_context(self) -> None:
         self.active_project_dir = None
         self.active_manifest_path = None
@@ -1342,13 +1391,18 @@ class MainWindow(QMainWindow):
         context: object,
         session_path: Path | None,
     ) -> None:
-        if not isinstance(context, Mapping):
+        resolved = self._resolve_project_context(context, session_path)
+        if resolved is None:
             self._clear_project_context()
             return
+        self._on_project_prepared(*(str(path) for path in resolved))
+
+    def _resolve_project_context(self, context: object, session_path: Path | None):
+        if not isinstance(context, Mapping):
+            return None
         project_text = str(context.get("project_dir", "")).strip()
         if not project_text:
-            self._clear_project_context()
-            return
+            return None
         if not sys.platform.startswith("win") and is_windows_absolute_path(
             project_text
         ):
@@ -1376,7 +1430,41 @@ class MainWindow(QMainWindow):
         manifest = Path(manifest_reference).expanduser()
         if not manifest.is_absolute():
             manifest = project / Path(manifest_reference.replace("\\", "/"))
-        self._on_project_prepared(str(project), str(manifest))
+        return project, manifest
+
+    def _validated_page_states(self, data: object) -> dict:
+        if not isinstance(data, Mapping) or not isinstance(data.get("pages", {}), Mapping):
+            raise ProjectFormatError("Project pages must be a JSON object.")
+        states = deepcopy(self._initial_page_states)
+        for name, state in data.get("pages", {}).items():
+            if name not in states:
+                continue
+            if not isinstance(state, Mapping):
+                raise ProjectFormatError(f"Invalid page state: {name}.")
+            for key, value in state.items():
+                if key not in states[name]:
+                    continue
+                expected = states[name][key]
+                valid = isinstance(value, type(expected))
+                if type(expected) is float:
+                    valid = type(value) in (int, float)
+                if key == "runs_table":
+                    valid = isinstance(value, list) and all(isinstance(row, list) and len(row) == 6 and all(isinstance(cell, str) for cell in row) for row in value)
+                if not valid:
+                    raise ProjectFormatError(f"Invalid value for {name}: {key}.")
+                states[name][key] = deepcopy(value)
+        return states
+
+    def _clear_session_results(self):
+        self.pages["Results Viewer"].qc_dashboard.clear()
+        analysis = self.pages["Analysis"]
+        if callable(getattr(analysis, "reset_session", None)):
+            analysis.reset_session()
+        else:
+            analysis.set_input_files("", "", "")
+            analysis.results.clear()
+        self.pages["Load System"].summary.setPlainText("Select matching topology and trajectory files, then validate the inputs.")
+        self.pages["Reports & Export"].status.setText("Prepare or reopen an MD project to export its evidence.")
 
     def apply_session_data(
         self,
@@ -1384,12 +1472,19 @@ class MainWindow(QMainWindow):
         *,
         session_path: str | Path | None = None,
     ):
-        pages = data.get("pages", {})
-        for name, state in pages.items():
-            page = self.pages.get(name)
-            if page is not None:
-                page.set_state(state)
+        if self._work_in_progress():
+            self.append_log("Stop or finish the current operation before opening another project.")
+            return
+        states = self._validated_page_states(data)
+        try:
+            current_page = int(data.get("current_page", 0))
+        except (TypeError, ValueError) as exc:
+            raise ProjectFormatError("Invalid current page in the project file.") from exc
         source = Path(session_path) if session_path is not None else None
+        self._resolve_project_context(data.get("project_context"), source)
+        self._clear_session_results()
+        for name, state in states.items():
+            self.pages[name].set_state(state)
         if "project_context" in data:
             self._restore_project_context(data.get("project_context"), source)
         else:
@@ -1399,12 +1494,15 @@ class MainWindow(QMainWindow):
             run_page = self.pages.get("MD Run")
             if isinstance(run_page, MDRunTab):
                 run_page.load_project("")
-        current_page = int(data.get("current_page", 0))
         self.nav.setCurrentRow(max(0, min(current_page, len(NAV_ITEMS) - 1)))
 
     def new_session(self):
-        for page in self.pages.values():
-            page.set_state({})
+        if self._work_in_progress():
+            self.append_log("Stop or finish the current operation before starting a new project.")
+            return
+        self._clear_session_results()
+        for name, page in self.pages.items():
+            page.set_state(deepcopy(self._initial_page_states[name]))
         self.log.clear()
         self._clear_project_context()
         self.current_session_path = None
@@ -1416,11 +1514,18 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Save project", default_path, "MolDynStudio Project (*.mds);;JSON (*.json)")
         if not path:
             return
-        out_path = self.project_manager.save(path, self.session_data())
+        try:
+            out_path = self.project_manager.save(path, self.session_data())
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Save failed", f"Could not save the project. Choose a writable location.\n{exc}")
+            return
         self.current_session_path = out_path
         self.append_log(f"Project saved to: {out_path}")
 
     def load_session(self):
+        if self._work_in_progress():
+            self.append_log("Stop or finish the current operation before opening another project.")
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Open project", str(Path.home()), "MolDynStudio Project (*.mds);;JSON (*.json)")
         if not path:
             return
@@ -1444,6 +1549,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Auto-saved project to {target}", 5000)
         except Exception as exc:
             self.statusBar().showMessage(f"Auto-save failed: {exc}", 5000)
+
+    def closeEvent(self, event):
+        if self._work_in_progress():
+            self.append_log("An operation is still active. Stop it or wait for completion before closing MolDynStudio.")
+            event.ignore()
+            return
+        self._autosave_timer.stop()
+        event.accept()
 
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)

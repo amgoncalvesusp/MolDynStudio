@@ -1,6 +1,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+import pytest
 
 from core.complex_builder import (
     LigandTopologyCoordinator,
@@ -9,6 +10,51 @@ from core.complex_builder import (
     patch_topology_for_ligand,
 )
 from utils.topology_builder import LigandParamWorker, LigandParams, LigandTopologyArtifacts
+
+
+def gro_row(resid, resname, atomname, serial, x):
+    return f"{resid:5d}{resname:<5}{atomname:>5}{serial:5d}{x:8.3f}{.2:8.3f}{.3:8.3f}"
+
+
+def test_ligand_coordinates_and_topology_precede_existing_water_and_ions(tmp_path):
+    protein, ligand, output = (tmp_path / name for name in ("protein.gro", "ligand.gro", "complex.gro"))
+    source = [gro_row(1,"ALA","CA",1,.1), gro_row(2,"SOL","OW",2,.4), gro_row(3,"SOD","SOD",3,.6)]
+    protein.write_text("Protein\n3\n" + "\n".join(source) + "\n1 1 1\n")
+    ligand_rows = [gro_row(1,"TWB","C1",1,.7), gro_row(2,"TWB","C1",2,.9)]
+    ligand.write_text("Ligands\n2\n" + "\n".join(ligand_rows) + "\n1 1 1\n")
+    combine_gro(protein, ligand, output)
+    assert b'\r' not in output.read_bytes()
+    combined = output.read_text().splitlines()[2:-1]
+    assert [row[5:10].strip() for row in combined] == ["ALA","TWB","TWB","SOL","SOD"]
+    assert [row[20:] for row in combined] == [source[0][20:], *[row[20:] for row in ligand_rows], source[1][20:],source[2][20:]]
+    top, itp, prm = (tmp_path / name for name in ("topol.top", "ligand.itp", "parameters.itp"))
+    top.write_text('#include "charmm.ff/forcefield.itp"\n[ moleculetype ]\nProtein 3\n[ atoms ]\n1 C 1 ALA CA 1 0 12\n[ system ]\nComplex\n[ molecules ]\nProtein 1\nSOL 1\nSOD 1\n')
+    itp.write_text("[ moleculetype ]\nTWB 3\n")
+    prm.write_text("[ atomtypes ]\nX 6 12 0 A .3 .2\n")
+    patch_topology_for_ligand(top,itp,molecule_count=2,parameter_includes=(prm,))
+    assert b'\r' not in top.read_bytes()
+    text = top.read_text()
+    assert text.index("parameters.itp") < text.index("ligand.itp") < text.index("[ moleculetype ]")
+    assert text.index("TWB                2") < text.index("SOL 1")
+    patch_topology_for_ligand(top,itp,molecule_count=2,parameter_includes=(prm,))
+    assert top.read_text() == text
+
+
+def test_conflicting_existing_ligand_count_is_rejected(tmp_path):
+    top, itp = tmp_path / "topol.top", tmp_path / "ligand.itp"
+    top.write_text("[ system ]\nComplex\n[ molecules ]\nProtein 1\nTWB 1\n")
+    itp.write_text("[ moleculetype ]\nTWB 3\n")
+    with pytest.raises(ValueError, match="count"):
+        patch_topology_for_ligand(top,itp,molecule_count=2)
+
+
+def test_raw_charmm_parameter_syntax_is_not_included_as_gromacs(tmp_path):
+    top, itp, prm = (tmp_path/name for name in ("topol.top", "ligand.itp", "ligand.prm"))
+    top.write_text("[ system ]\nComplex\n[ molecules ]\nProtein 1\n")
+    itp.write_text("[ moleculetype ]\nTWB 3\n")
+    prm.write_text("* CHARMM parameters\nBONDS\nCT CT 300 1.5\nEND\n")
+    with pytest.raises(ValueError, match="GROMACS"):
+        patch_topology_for_ligand(top,itp,parameter_includes=(prm,))
 
 
 class ComplexBuilderTests(unittest.TestCase):

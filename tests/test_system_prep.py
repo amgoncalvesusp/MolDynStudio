@@ -33,6 +33,14 @@ class SystemPrepTests(unittest.TestCase):
         self.assertIn("rcoulomb      = 1.2", content)
         self.assertIn("DispCorr      = no", content)
 
+    def test_ion_placement_input_avoids_pme_before_counterions_are_added(self):
+        from utils.mdp_generator import MDParameters, generate_all_mdp
+        for force_field in ("CHARMM36m", "AMBER99SB-ILDN"):
+            with self.subTest(force_field=force_field):
+                self.assertIn("coulombtype   = Cut-off", build_ions_mdp(force_field))
+                for content in generate_all_mdp(MDParameters(force_field=force_field)).values():
+                    self.assertIn("coulombtype             = PME", content)
+
     def test_charmm_system_prep_uses_charmm_ion_residue_names(self):
         params = SystemPrepParams(
             pdb_path="protein.pdb",

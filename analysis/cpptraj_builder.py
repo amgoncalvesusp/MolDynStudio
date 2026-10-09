@@ -5,14 +5,17 @@ from __future__ import annotations
 from typing import Mapping
 
 from PyQt5.QtGui import QColor, QTextCharFormat, QSyntaxHighlighter
+from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtWidgets import QComboBox, QHBoxLayout, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
 from core import wsl_bridge
+from core.settings import SettingsStore
+from tabs.base import PathSelector
 
 
 TEMPLATES: Mapping[str, str] = {
     "RMSD": "parm topology.parm7\ntrajin trajectory.nc\nrmsd :1-999@CA out rmsd.dat\nrun\n",
-    "RMSF": "parm topology.parm7\ntrajin trajectory.nc\natomicfluct :1-999@CA out rmsf.dat byres\nrun\n",
+    "RMSF": "parm topology.parm7\ntrajin trajectory.nc\nrms first :1-999@CA\natomicfluct :1-999@CA out rmsf.dat byres\nrun\n",
     "H-bonds": "parm topology.parm7\ntrajin trajectory.nc\nhbond HB out hbonds.dat avgout hbonds_avg.dat\nrun\n",
     "Strip water": "parm topology.parm7\ntrajin trajectory.nc\nstrip :WAT,Na+,Cl-\ntrajout stripped.nc\nrun\n",
     "Clustering": "parm topology.parm7\ntrajin trajectory.nc\ncluster hieragglo epsilon 2.0 clusters 5 out clusters.dat summary summary.dat\nrun\n",
@@ -36,9 +39,30 @@ class CpptrajHighlighter(QSyntaxHighlighter):
                 start = text.find(word, start + len(word))
 
 
-class CpptrajBuilderWidget(QWidget):
-    def __init__(self, parent=None):
+class CpptrajWorker(QThread):
+    completed = pyqtSignal(str)
+
+    def __init__(self, script, binary, conda_env, workdir, parent=None):
         super().__init__(parent)
+        self.inputs = (script, binary, conda_env, workdir)
+
+    def run(self):
+        script, binary, conda_env, workdir = self.inputs
+        try:
+            completed = wsl_bridge.run([binary], input=script, env_name=conda_env, cwd=workdir or None, check=False)
+            prefix = "[OK] " if completed.returncode == 0 else f"[FAIL] Exit code {completed.returncode}\n"
+            self.completed.emit(prefix + completed.stdout + completed.stderr)
+        except Exception as exc:
+            self.completed.emit(f"CPPTRAJ execution failed: {exc}")
+
+
+class CpptrajBuilderWidget(QWidget):
+    def __init__(self, parent=None, settings=None):
+        super().__init__(parent)
+        self.settings = settings if settings is not None else SettingsStore()
+        self._worker = None
+        self._busy = False
+        self.operation_blocked = None
         layout = QVBoxLayout(self)
 
         top = QHBoxLayout()
@@ -48,10 +72,12 @@ class CpptrajBuilderWidget(QWidget):
         insert = QPushButton("Insert")
         insert.clicked.connect(self.insert_template)
         top.addWidget(insert)
-        run = QPushButton("Run CPPTRAJ")
-        run.clicked.connect(self.run_cpptraj)
-        top.addWidget(run)
+        self.run_button = QPushButton("Run CPPTRAJ")
+        self.run_button.clicked.connect(self.run_cpptraj)
+        top.addWidget(self.run_button)
         layout.addLayout(top)
+        self.workdir = PathSelector("Working folder for relative script paths", directory=True)
+        layout.addWidget(self.workdir)
 
         self.editor = QTextEdit()
         self.editor.setPlainText(TEMPLATES["RMSD"])
@@ -68,13 +94,26 @@ class CpptrajBuilderWidget(QWidget):
         self.editor.setPlainText(template)
 
     def run_cpptraj(self) -> None:
+        if self.is_busy() or (self.operation_blocked and self.operation_blocked()):
+            self.output.setPlainText("Wait for the active job to finish.")
+            return
         script = self.editor.toPlainText()
-        try:
-            completed = wsl_bridge.run(
-                ["cpptraj"],
-                input=script,
-                check=False,
-            )
-            self.output.setPlainText(completed.stdout + completed.stderr)
-        except Exception as exc:
-            self.output.setPlainText(f"CPPTRAJ execution failed: {exc}")
+        if not script.strip():
+            self.output.setPlainText("Enter a CPPTRAJ script first.")
+            return
+        binary = self.settings.value("cpptraj_binary")
+        binary = "cpptraj" if binary == "auto" else wsl_bridge.win_to_wsl(binary)
+        self._worker = CpptrajWorker(script, binary, self.settings.value("conda_environment"), self.workdir.text(), self)
+        self._worker.completed.connect(self.output.setPlainText)
+        self._worker.finished.connect(self._on_finished)
+        self._busy = True
+        self.run_button.setEnabled(False)
+        self.output.setPlainText("Running CPPTRAJ...")
+        self._worker.start()
+
+    def _on_finished(self):
+        self._busy = False
+        self.run_button.setEnabled(True)
+
+    def is_busy(self):
+        return self._busy or (self._worker is not None and self._worker.isRunning())

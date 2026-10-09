@@ -38,10 +38,10 @@ class EnvironmentManagerTests(unittest.TestCase):
         self.assertIn("ambertools=23", contents)
         self.assertIn("mdtraj<1.11", contents)
         self.assertIn("numpy>=1.26,<2", contents)
-        self.assertIn("gromacs=2026.3", contents)
+        self.assertIn("gromacs=2025.4", contents)
         self.assertEqual(
             REQUIRED_PACKAGES["gromacs"],
-            "conda-forge::gromacs=2026.3",
+            "conda-forge::gromacs=2025.4",
         )
         self.assertEqual(REQUIRED_PACKAGES["mdtraj"], "conda-forge::mdtraj<1.11")
         self.assertEqual(

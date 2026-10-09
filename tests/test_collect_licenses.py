@@ -101,6 +101,19 @@ class CollectLicensesTests(unittest.TestCase):
 
         self.assertFalse((self.output / "manifest.json").exists())
 
+    def test_records_openmm_source_revision_without_executing_package_code(self):
+        self.distributions["root-pkg"].requires = ["openmm"]
+        distribution = self.distribution("openmm")
+        self.distributions["openmm"] = distribution
+        revision = "b399af4725573963b46d6c1083fdcf7a37615857"
+        source = Path(distribution.locate_file("openmm/version.py"))
+        source.parent.mkdir()
+        source.write_text(f"git_revision = {revision!r}\nraise AssertionError('must not execute')\n")
+
+        manifest = self.collect()
+
+        self.assertEqual(next(item for item in manifest if item["name"] == "openmm")["source_revision"], revision)
+
 
 if __name__ == "__main__":
     unittest.main()

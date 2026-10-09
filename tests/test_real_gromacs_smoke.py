@@ -257,6 +257,16 @@ class RealGromacsSmokeTests(unittest.TestCase):
                     path = work_dir / filename
                     self.assertTrue(result.ok, result.message)
                     self.assertGreater(path.stat().st_size, 0, f"{filename} is empty")
+            # Test the engine-to-analysis contract, not just engine execution.
+            import MDAnalysis as mda
+
+            universe = mda.Universe(str(work_dir / "em.tpr"), str(work_dir / "em.gro"))
+            try:
+                self.assertEqual(universe.atoms.n_atoms, 1)
+                self.assertEqual(len(universe.atoms.charges), 1)
+                self.assertGreater(float(universe.atoms.masses[0]), 0)
+            finally:
+                universe.trajectory.close()
 
 
 if __name__ == "__main__":

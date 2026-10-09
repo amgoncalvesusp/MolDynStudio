@@ -85,6 +85,7 @@ def build() -> int:
         "--clean",
         "--workpath", str(work_path),
         "--specpath", str(spec_path),
+        "--additional-hooks-dir", str(REPO_ROOT / "build" / "hooks"),
         "--distpath", str(dist_path),
         "--add-data", f"{REPO_ROOT / 'environment.yml'}{sep}.",
         "--add-data", f"{REPO_ROOT / 'install_wsl.ps1'}{sep}.",
@@ -96,6 +97,13 @@ def build() -> int:
         "--collect-submodules", "windows",
         "--collect-submodules", "core",
         "--collect-submodules", "utils",
+        "--collect-submodules", "analysis",
+        "--collect-all", "MDAnalysis",
+        "--collect-all", "mdtraj",
+        "--collect-all", "Bio",
+        "--collect-all", "pdbfixer",
+        "--collect-all", "openmm",
+        "--collect-all", "parmed",
     ]
     if (REPO_ROOT / "assets").is_dir():
         args.extend(["--add-data", f"{REPO_ROOT / 'assets'}{sep}assets"])
@@ -105,6 +113,9 @@ def build() -> int:
     print("Running:", " ".join(args))
     result = subprocess.call(args, cwd=str(REPO_ROOT))
     if result == 0:
+        msvc_manifest = work_path / "MolDynStudio" / "openmm-msvc-runtime.json"
+        if msvc_manifest.is_file():
+            shutil.copy2(msvc_manifest, license_path / msvc_manifest.name)
         shutil.copytree(license_path, dist_path / "licenses", dirs_exist_ok=True)
         shutil.rmtree(work_path, ignore_errors=True)
     return result

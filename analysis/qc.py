@@ -21,6 +21,8 @@ class TimeSeries:
     values: tuple[float, ...]
     source: str = ""
     replicate: str = ""
+    x_unit: str = "unknown"
+    value_unit: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ class QCSummary:
     burn_in_time: float | None
     status: str
     message: str
+    x_unit: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -97,22 +100,47 @@ def parse_numeric_series(
     replicate: str | None = None,
 ) -> TimeSeries:
     source = Path(path)
+    if x_col < 0 or y_col < 0:
+        raise ValueError("Column indices must be nonnegative.")
     rows = _numeric_rows(source)
     times: list[float] = []
     values: list[float] = []
     for row in rows:
         if len(row) <= max(x_col, y_col):
-            continue
+            raise ValueError(f"Missing numeric columns in {source}")
+        if not math.isfinite(row[x_col]) or not math.isfinite(row[y_col]):
+            raise ValueError(f"Non-finite data in {source}; inspect the source frames.")
         times.append(row[x_col])
         values.append(row[y_col])
     if not times:
         raise ValueError(f"No numeric columns found in {source}")
+    metric_name = metric or infer_metric_name(source.name)
+    text = source.read_text(encoding="utf-8", errors="replace")
+    unit_match = re.search(r'xaxis\s+label\s+"[^"\n]*\((fs|ps|ns|us|ms|s)\)', text, re.I)
+    x_unit = "residue" if metric_name.lower() == "rmsf" else "unknown"
+    if unit_match and x_unit != "residue":
+        factor = {"fs": 1e-6, "ps": 1e-3, "ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}[unit_match[1].lower()]
+        times = [value * factor for value in times]
+        x_unit = "ns"
+    elif text.splitlines() and "time_ns" in text.splitlines()[0].lower():
+        x_unit = "ns"
+    value_match = re.search(r'yaxis\s+label\s+"[^"\n]*\(([^)]+)\)', text, re.I)
+    value_unit = value_match[1] if value_match else "unknown"
+    value_unit = value_unit.replace(r"\S2\N", "2").replace("nm^2", "nm2").replace("nm²", "nm2")
+    if value_unit == "unknown" and text.splitlines() and "," in text.splitlines()[0]:
+        headers = next(csv.reader([text.splitlines()[0]]))
+        if y_col < len(headers):
+            match = re.search(r"_(nm2|nm|angstrom|kJ_mol|K|bar)$", headers[y_col])
+            if match:
+                value_unit = match[1]
     return TimeSeries(
-        metric=metric or infer_metric_name(source.name),
+        metric=metric_name,
         time=tuple(times),
         values=tuple(values),
         source=str(source),
         replicate=replicate or infer_replicate_name(source.name),
+        x_unit=x_unit,
+        value_unit=value_unit,
     )
 
 
@@ -122,20 +150,25 @@ def summarize_series(
     values: Sequence[float],
     source: str = "",
     replicate: str = "",
+    x_unit: str = "unknown",
 ) -> QCSummary:
+    if len(time) != len(values):
+        return _empty_summary(metric, source, replicate, 0, "FAIL", "Coordinate and value lengths differ.")
     clean = tuple(
         (float(t), float(v))
         for t, v in zip(time, values)
-        if math.isfinite(float(t)) and math.isfinite(float(v))
     )
-    if len(clean) < 3:
+    if any(not math.isfinite(t) or not math.isfinite(v) for t, v in clean):
+        return _empty_summary(metric, source, replicate, len(clean), "FAIL", "Non-finite data; no frames were silently discarded.")
+    if not clean or (len(clean) < 3 and metric.lower() != "rmsf"):
         return _empty_summary(metric, source, replicate, len(clean), "FAIL", "Not enough finite points.")
 
-    clean = tuple(sorted(clean, key=lambda item: item[0]))
     x = tuple(item[0] for item in clean)
     y = tuple(item[1] for item in clean)
     if metric.lower() == "rmsf":
         return _distribution_summary(metric, x, y, source, replicate)
+    if any(right <= left for left, right in zip(x, x[1:])):
+        return _empty_summary(metric, source, replicate, len(clean), "FAIL", "Time must increase strictly; check duplicate or restarted trajectories.")
     final_start = max(0, int(len(y) * 0.6))
     final_y = y[final_start:] or y
     final_x = x[final_start:] or x
@@ -165,6 +198,7 @@ def summarize_series(
         burn_in_time=burn_in,
         status=status,
         message=message,
+        x_unit=x_unit,
     )
 
 
@@ -176,6 +210,7 @@ def summarize_file(path: str | Path, metric: str | None = None) -> QCSummary:
         series.values,
         source=series.source,
         replicate=series.replicate,
+        x_unit=series.x_unit,
     )
 
 
@@ -202,6 +237,9 @@ def compare_replicates(summaries: Iterable[QCSummary]) -> ReplicateComparison:
 
 
 def recommended_analysis_start(summaries: Iterable[QCSummary]) -> float | None:
+    summaries = tuple(s for s in summaries if s.metric.lower() != "rmsf")
+    if not summaries or any(s.x_unit != "ns" or s.status != "OK" for s in summaries):
+        return None
     starts = tuple(s.burn_in_time for s in summaries if s.burn_in_time is not None)
     if not starts:
         return None
@@ -210,15 +248,21 @@ def recommended_analysis_start(summaries: Iterable[QCSummary]) -> float | None:
 
 def _numeric_rows(path: Path) -> tuple[tuple[float, ...], ...]:
     rows: list[tuple[float, ...]] = []
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    header_seen = False
+    for number, raw in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith(("#", "@")):
             continue
         parts = _split_numeric_line(line)
         try:
             numbers = tuple(float(part) for part in parts)
-        except ValueError:
-            continue
+        except ValueError as exc:
+            # One CSV header may precede data; malformed numeric rows must
+            # never disappear from a scientific time series silently.
+            if not rows and not header_seen and "," in line and not re.match(r"^[+\-.\d]", line):
+                header_seen = True
+                continue
+            raise ValueError(f"Malformed numeric row at {path}:{number}") from exc
         if numbers:
             rows.append(numbers)
     return tuple(rows)
@@ -278,7 +322,7 @@ def _classify(
         return "WARN", "Late drift remains high; extend simulation or exclude early frames."
     if metric.lower() in {"rmsd", "radius of gyration", "sasa"} and final_cv > 0.20:
         return "WARN", "Final-window fluctuations are high for this structural metric."
-    return "OK", "Stable plateau detected with modest late drift."
+    return "OK", "Heuristic plateau with modest late drift; this does not establish equilibration or convergence."
 
 
 def _empty_summary(

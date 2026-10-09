@@ -5,8 +5,11 @@ channels:
 dependencies:
   - python=3.11
   - pip
-  - gromacs=2026.3
+  # MDAnalysis 2.10 reads TPR through GROMACS 2025; keep the default pipeline compatible.
+  - gromacs=2025.4
   - ambertools=23
+  - openbabel>=3.1
+  - parmed=4.3.1
   - gmx_mmpbsa
   - mdanalysis
   - mdtraj<1.11

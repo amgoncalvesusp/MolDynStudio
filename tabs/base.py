@@ -26,9 +26,12 @@ class PathSelector(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.line_edit = QLineEdit()
+        self.line_edit.setAccessibleName(placeholder)
+        self.setFocusProxy(self.line_edit)
         self.line_edit.setPlaceholderText(placeholder)
         layout.addWidget(self.line_edit, 1)
         button = QPushButton("Browse")
+        button.setAccessibleName(f"Browse for {placeholder}")
         button.clicked.connect(self.browse)
         layout.addWidget(button)
 

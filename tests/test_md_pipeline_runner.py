@@ -165,6 +165,75 @@ class BlockingProductionRunner(FakeCommandRunner):
 
 
 class MDPipelineServiceTests(unittest.TestCase):
+    def test_default_binary_checks_follow_manifest_backend_on_run_and_resume(self):
+        for operation in ("run", "resume_production"):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = _manifest(root)
+                manifest = load_manifest(path)
+                save_manifest(replace(manifest, gromacs_binary="/opt/gromacs/bin/gmx_mpi",
+                                      conda_environment="configured-md-env"), path)
+                if operation == "resume_production":
+                    for name in ("md.tpr", "md.cpt", "md.log", "md.edr"):
+                        (root / name).write_text("placeholder")
+                runner = FakeCommandRunner(root)
+                service = MDPipelineService(path, build_pipeline(root), _capabilities(),
+                                            command_runner=runner)
+                with mock.patch("core.artifact_validation.wsl_bridge.run",
+                                return_value=SimpleNamespace(returncode=0, stdout="", stderr="")) as run:
+                    self.assertTrue(getattr(service, operation)())
+                self.assertTrue(run.call_args_list)
+                self.assertEqual({call.args[0][2] for call in run.call_args_list}, {"-s", "-cp"})
+                for call in run.call_args_list:
+                    self.assertEqual(call.args[0][0], "/opt/gromacs/bin/gmx_mpi")
+                    self.assertEqual(call.kwargs, {"env_name": "configured-md-env"})
+                self.assertTrue(all(command.executable == "/opt/gromacs/bin/gmx_mpi"
+                                    and command.conda_env == "configured-md-env"
+                                    for command in runner.commands))
+
+    def test_custom_binary_validators_keep_their_one_argument_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            save_manifest(replace(load_manifest(path), gromacs_binary="gmx_mpi",
+                                  conda_environment="configured-md-env"), path)
+            validators = _validators()
+            service = MDPipelineService(path, build_pipeline(root), _capabilities(),
+                                        command_runner=FakeCommandRunner(root), validators=validators)
+            with mock.patch("core.artifact_validation.wsl_bridge.run") as run:
+                self.assertTrue(service.run())
+            run.assert_not_called()
+            self.assertIs(service.validators, validators)
+
+    def test_restart_invalidates_all_downstream_results_before_first_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = _manifest(root)
+            manifest = load_manifest(path)
+            save_manifest(replace(manifest, stages={
+                name: replace(record, status=StageStatus.COMPLETED.value,
+                              outputs={"old.xtc": "old.xtc"})
+                for name, record in manifest.stages.items()
+            }), path)
+            observed = []
+
+            class InspectingRunner(FakeCommandRunner):
+                def execute(self, command, on_output=None):
+                    if not observed:
+                        observed.append(load_manifest(path))
+                    return super().execute(command, on_output)
+
+            service = MDPipelineService(
+                path, build_pipeline(root, (StageName.MINIMIZATION,)),
+                _capabilities(), command_runner=InspectingRunner(root),
+                validators=_validators(),
+            )
+            self.assertTrue(service.run())
+            for stage in (StageName.NVT, StageName.NPT, StageName.PRODUCTION):
+                self.assertEqual(observed[0].stages[stage.value].status, StageStatus.NOT_READY.value)
+                self.assertEqual(observed[0].stages[stage.value].outputs, {})
+            self.assertEqual(load_manifest(path).stages[StageName.PRODUCTION.value].status, StageStatus.NOT_READY.value)
+
     def test_empty_energy_output_fails_stage(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 from typing import Any
 
 class RunManifestError(ValueError):
@@ -100,7 +101,16 @@ def save_manifest(manifest: RunManifest, path: str | Path) -> Path:
             json.dump(asdict(manifest), handle, indent=2)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_path, target)
+        # Windows sync/antivirus readers can briefly deny replacement. Keep
+        # atomic publication and the old manifest intact on every failed try.
+        for attempt in range(6):
+            try:
+                os.replace(temp_path, target)
+                break
+            except OSError as error:
+                if getattr(error, "winerror", None) not in {5, 32, 33} or attempt == 5:
+                    raise
+                time.sleep(0.05 * (2 ** attempt))
         temp_path = None
         return target
     except (OSError, TypeError, ValueError) as exc:

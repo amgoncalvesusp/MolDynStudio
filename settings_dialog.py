@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
+    QLabel,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -27,13 +28,14 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings
         self.setWindowTitle("Preferences")
-        self.resize(640, 420)
+        self.resize(720, 480)
         layout = QVBoxLayout(self)
         form = QFormLayout()
         layout.addLayout(form)
 
         self.gromacs = self._path_row(form, "GROMACS binary path", "gromacs_binary")
         self.cpptraj = self._path_row(form, "CPPTRAJ binary", "cpptraj_binary")
+        self.docklens = self._path_row(form, "DockLens executable", "docklens_binary")
 
         self.conda_env = QLineEdit(str(settings.value("conda_environment")))
         form.addRow("Conda environment", self.conda_env)
@@ -51,14 +53,17 @@ class SettingsDialog(QDialog):
         form.addRow("GPU acceleration", self.gpu)
 
         self.theme = QComboBox()
-        self.theme.addItems(["Light", "Dark"])
-        self.theme.setCurrentText(str(settings.value("theme", "Light")))
+        self.theme.addItems(["Light"])
+        self.theme.setToolTip("Light is the supported interface theme.")
         form.addRow("Theme", self.theme)
 
         self.language = QComboBox()
-        self.language.addItems(["English", "Portuguese"])
-        self.language.setCurrentText(str(settings.value("language", "English")))
+        self.language.addItems(["English"])
+        self.language.setToolTip("All interface controls and documentation use English.")
         form.addRow("Language", self.language)
+        note = QLabel("Executable changes apply to the next operation. Use Auto-detect for tools on PATH. DockLens can also use an installed local application.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.save)
@@ -68,13 +73,15 @@ class SettingsDialog(QDialog):
     def _path_row(self, form: QFormLayout, label: str, key: str, directory: bool = False) -> QLineEdit:
         row = QHBoxLayout()
         edit = QLineEdit(str(self.settings.value(key)))
+        edit.setAccessibleName(label)
         row.addWidget(edit)
         browse = QPushButton("Browse")
         browse.clicked.connect(lambda: self._browse(edit, directory))
         row.addWidget(browse)
-        auto = QPushButton("Auto-detect")
-        auto.clicked.connect(lambda: edit.setText("auto"))
-        row.addWidget(auto)
+        if not directory:
+            auto = QPushButton("Auto-detect")
+            auto.clicked.connect(lambda: edit.setText("auto"))
+            row.addWidget(auto)
         form.addRow(label, row)
         return edit
 
@@ -89,6 +96,7 @@ class SettingsDialog(QDialog):
     def save(self) -> None:
         self.settings.set_value("gromacs_binary", self.gromacs.text())
         self.settings.set_value("cpptraj_binary", self.cpptraj.text())
+        self.settings.set_value("docklens_binary", self.docklens.text().strip() or "auto")
         self.settings.set_value("conda_environment", self.conda_env.text())
         self.settings.set_value("default_output_folder", self.output.text())
         self.settings.set_value("cores", self.cores.value())

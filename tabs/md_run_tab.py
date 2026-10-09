@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import (
     QApplication,
@@ -107,6 +107,8 @@ class PlotPanel:
 class MDRunTab(MolDynBasePage):
     """Thin Qt view over :class:`MDPipelineRunner` and a run manifest."""
 
+    production_completed = pyqtSignal(object)
+
     def __init__(
         self,
         settings: SettingsStore | None = None,
@@ -118,6 +120,7 @@ class MDRunTab(MolDynBasePage):
     ) -> None:
         super().__init__(parent)
         self.settings = settings or SettingsStore()
+        self.operation_blocked: Callable[[], bool] = lambda: False
         self._runner_factory = runner_factory
         self._capability_probe = capability_probe
         self._artifact_validators = artifact_validators or ArtifactValidators()
@@ -125,6 +128,7 @@ class MDRunTab(MolDynBasePage):
         self._manifest_file: Path | None = None
         self._manifest: RunManifest | None = None
         self._runner: object | None = None
+        self._pending_completion: tuple[bool, str] | None = None
         self._active = False
         self._active_stage: StageName | None = None
         self._preparation_valid = False
@@ -221,14 +225,21 @@ class MDRunTab(MolDynBasePage):
     def is_active(self) -> bool:
         """Whether this tab currently owns a running MD pipeline."""
 
-        return self._active
+        return self.is_busy()
+
+    def is_busy(self) -> bool:
+        """Keep the project locked until the worker thread has fully exited."""
+        return self._active or bool(
+            self._runner is not None
+            and getattr(self._runner, "isRunning", lambda: False)()
+        )
 
     def load_project(self, project_dir: str) -> None:
         """Use the exact project directory selected by MD Setup."""
 
         value = str(project_dir or "").strip()
         selected = Path(value).expanduser().resolve() if value else None
-        if self._active:
+        if self.is_busy():
             if selected != self._project_dir:
                 self._append_ui_message(
                     "The project cannot be changed while an MD pipeline is active."
@@ -290,7 +301,8 @@ class MDRunTab(MolDynBasePage):
     def start_run(self) -> None:
         """Validate the prepared project and start all dynamics stages."""
 
-        if self._active:
+        if self.is_busy() or self.operation_blocked():
+            self._append_ui_message("Wait for the current project operation before starting MD.")
             return
         self.refresh_from_manifest()
         if self._manifest is None or not self._preparation_valid:
@@ -316,7 +328,8 @@ class MDRunTab(MolDynBasePage):
     def resume_run(self) -> None:
         """Start at a validated stage or continue a production checkpoint."""
 
-        if self._active:
+        if self.is_busy() or self.operation_blocked():
+            self._append_ui_message("Wait for the current project operation before resuming MD.")
             return
         self.refresh_from_manifest()
         index = self.resume_selector.currentIndex()
@@ -393,6 +406,8 @@ class MDRunTab(MolDynBasePage):
             runner.stage_changed.connect(self._on_stage_changed)
             runner.log_line.connect(self._on_gromacs_line)
             runner.finished_with_status.connect(self._on_runner_finished)
+            if hasattr(runner, "finished"):
+                runner.finished.connect(self._on_thread_finished)
         except Exception as exc:
             self._append_ui_message(f"Could not start the MD pipeline: {exc}")
             self._set_controls_active(False)
@@ -691,7 +706,16 @@ class MDRunTab(MolDynBasePage):
             if value is not None:
                 self.append_live_data(metric, plot_step, value)
 
-    def _on_runner_finished(self, _success: bool, message: str) -> None:
+    def _on_thread_finished(self) -> None:
+        if self._pending_completion is not None:
+            success, message = self._pending_completion
+            self._pending_completion = None
+            self._on_runner_finished(success, message)
+
+    def _on_runner_finished(self, success: bool, message: str) -> None:
+        if self._runner is not None and getattr(self._runner, "isRunning", lambda: False)():
+            self._pending_completion = (success, message)
+            return
         self._runner = None
         self._active = False
         self._active_stage = None
@@ -702,6 +726,32 @@ class MDRunTab(MolDynBasePage):
             self._set_controls_active(False)
             return
         self.refresh_from_manifest()
+        if success:
+            self._handoff_production()
+
+    def _handoff_production(self) -> None:
+        manifest = self._manifest
+        if manifest is None or self._project_dir is None:
+            return
+        if manifest.stages[StageName.PRODUCTION.value].status != StageStatus.COMPLETED.value:
+            return
+        requirements = (
+            ("md.tpr", self._artifact_validators.validate_tpr),
+            ("md.xtc", self._artifact_validators.validate_file),
+            ("md.edr", self._artifact_validators.validate_file),
+        )
+        if not self._recorded_outputs_are_valid(StageName.PRODUCTION, requirements):
+            self._append_ui_message("Production analysis handoff requires valid recorded TPR, XTC, and EDR files.")
+            return
+        self.production_completed.emit({
+            "project_dir": str(self._project_dir),
+            "manifest_path": str(self._manifest_file),
+            "topology": str(self._project_dir / "md.tpr"),
+            "trajectory": str(self._project_dir / "md.xtc"),
+            "energy": str(self._project_dir / "md.edr"),
+            "gromacs_binary": manifest.gromacs_binary,
+            "conda_environment": manifest.conda_environment,
+        })
 
     def _append_ui_message(self, message: str) -> None:
         self._append_log_line("[MolDynStudio] ", str(message))

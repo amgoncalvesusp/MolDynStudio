@@ -32,8 +32,9 @@ except Exception:  # pragma: no cover - keeps pure helpers importable without Py
 
 
 REQUIRED_PACKAGES: Mapping[str, str] = {
-    "gromacs": "conda-forge::gromacs=2026.3",
+    "gromacs": "conda-forge::gromacs=2025.4",
     "ambertools": "conda-forge::ambertools=23",
+    "openbabel": "conda-forge::openbabel>=3.1",
     "gmx_mmpbsa": "conda-forge::gmx_mmpbsa",
     "mdanalysis": "conda-forge::mdanalysis",
     "mdtraj": "conda-forge::mdtraj<1.11",

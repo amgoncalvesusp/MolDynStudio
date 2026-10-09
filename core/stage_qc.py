@@ -168,12 +168,83 @@ def evaluate_stage_qc(
         return StageQCResult(stage_name.value, checks)
 
     samples, mentioned, malformed = _parse_diagnostics(lines)
+    if stage_name == StageName.MINIMIZATION:
+        checks = (
+            _minimization_energy_check(samples[ENERGY_DRIFT_GATE], mentioned, malformed,
+                                       source, selected_policy, lines),
+            *(_minimization_nonthermal_check(gate, samples[gate], mentioned, malformed,
+                                             source, selected_policy)
+              for gate in (TEMPERATURE_GATE, PRESSURE_GATE)),
+        )
+        return StageQCResult(stage_name.value, checks)
     checks = (
         _energy_check(samples[ENERGY_DRIFT_GATE], mentioned, malformed, source, selected_policy),
         _temperature_check(samples[TEMPERATURE_GATE], mentioned, malformed, source, selected_policy),
         _pressure_check(samples[PRESSURE_GATE], mentioned, malformed, source, selected_policy),
     )
     return StageQCResult(stage_name.value, checks)
+
+
+def _minimization_force_evidence(lines: list[str]) -> tuple[dict[str, float | int], bool, str]:
+    """Read an explicit GROMACS termination statement; never infer convergence."""
+    text = "\n".join(lines)
+    convergence = re.search(
+        rf"\bconverged to Fmax\s*<\s*({_FLOAT_PATTERN})\s+in\s+(\d+)\s+steps", text
+    )
+    force = re.search(r"Maximum force\s*=\s*(\S+)", text)
+    observations: dict[str, float | int] = {}
+    if force:
+        try:
+            maximum = float(force[1])
+        except ValueError:
+            return {}, True, "The reported maximum force is malformed."
+        if not math.isfinite(maximum) or maximum < 0:
+            return {}, True, "The reported maximum force is nonfinite or negative."
+        observations = {"maximum_force_kj_mol_nm": maximum}
+    if convergence:
+        tolerance = float(convergence[1])
+        if not math.isfinite(tolerance) or tolerance <= 0:
+            return observations, True, "The reported force tolerance is invalid."
+        observations = {**observations, "force_tolerance_kj_mol_nm": tolerance,
+                        "minimization_steps": int(convergence[2])}
+        if force and observations["maximum_force_kj_mol_nm"] >= tolerance:
+            return observations, True, "Reported convergence conflicts with the final maximum force."
+        return observations, False, "The log explicitly reports convergence below the force tolerance."
+    if re.search(r"did not converge|converged to machine precision", text, re.I):
+        return observations, True, "The log does not report reaching the requested force tolerance."
+    return observations, False, "Force-tolerance convergence is not reported in the log."
+
+
+def _minimization_energy_check(values, mentioned, malformed, source, policy, lines) -> QCCheck:
+    unavailable = _diagnostic_availability(ENERGY_DRIFT_GATE, values, mentioned, malformed, source, policy)
+    if unavailable is not None:
+        return unavailable
+    force, force_warning, evidence = _minimization_force_evidence(lines)
+    observations = {"sample_count": len(values), "first_kj_mol": values[0],
+                    "last_kj_mol": values[-1], "energy_change_kj_mol": values[-1] - values[0], **force}
+    invalid = not all(math.isfinite(value) for value in values) or max(map(abs, values)) > 1e15
+    severity = _required_severity(ENERGY_DRIFT_GATE, policy) if invalid else QCSeverity.PASS
+    message = ("Minimization potential energy exceeds the numeric sanity limit. " if invalid else
+               "Potential-energy change is recorded; a decrease is expected during minimization. ")
+    if force_warning:
+        severity = _required_severity(ENERGY_DRIFT_GATE, policy)
+    return _with_malformed_policy(
+        _check(ENERGY_DRIFT_GATE, severity, message + evidence, source, observations), malformed, policy
+    )
+
+
+def _minimization_nonthermal_check(gate, values, mentioned, malformed, source, policy) -> QCCheck:
+    """Retain values without applying dynamics thresholds to minimization."""
+    message = f"{gate.capitalize()} equilibrium criteria are not applicable to energy minimization."
+    if not values and (gate in mentioned or gate in malformed or gate in policy.required_gates):
+        unavailable = _diagnostic_availability(gate, values, mentioned, malformed, source, policy)
+        return _check(gate, unavailable.severity, message + " " + unavailable.message, source, {})
+    observations = _range_observations(values) if values else {"sample_count": 0}
+    severity = QCSeverity.PASS
+    if not all(math.isfinite(value) for value in values):
+        severity = _required_severity(gate, policy)
+        message += " Recorded diagnostic values are nonfinite."
+    return _with_malformed_policy(_check(gate, severity, message, source, observations), malformed, policy)
 
 
 def _parse_diagnostics(
@@ -184,11 +255,24 @@ def _parse_diagnostics(
     mentioned: set[str] = set()
     malformed: set[str] = set()
     pending_header: frozenset[str] = frozenset()
+    summary_section = False
 
     for raw_line in lines:
         text = raw_line.strip()
         if not text:
             continue
+        # GROMACS repeats energy-table headers for averages and RMS fluctuations.
+        # Those aggregates are not trajectory samples or the final endpoint.
+        if re.sub(r"[^A-Z]", "", text.upper()) in {"AVERAGES", "RMSFLUCTUATIONS", "RMS"}:
+            summary_section = True
+            malformed.update(pending_header)
+            pending_header = frozenset()
+            continue
+        if summary_section:
+            if re.fullmatch(r"Step\s+Time", text):
+                summary_section = False
+            else:
+                continue
         update = parser.feed_line(raw_line)
         parsed = _progress_values(update)
         potential_energy = _POTENTIAL_ENERGY_VALUE.search(text)

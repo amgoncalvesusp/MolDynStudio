@@ -168,14 +168,20 @@ def validate_mdp(path: str | Path, *, require_dt: bool = True) -> ValidationResu
     return ValidationResult(True, "MDP parameters are valid.")
 
 
-def _validate_binary(path: str | Path, kind: str, args: list[str], bridge: Any) -> ValidationResult:
+def _validate_binary(
+    path: str | Path, kind: str, args: list[str], bridge: Any,
+    gromacs_binary: str, conda_environment: str,
+) -> ValidationResult:
     candidate = Path(path).expanduser() if path else None
     if candidate is None:
         return ValidationResult(False, f"{kind} is required.")
     if not candidate.exists() or not candidate.is_file():
         return ValidationResult(False, f"{kind} does not exist or is not a file: {candidate}")
     try:
-        completed = bridge.run(["gmx", "dump", *args, str(candidate)])
+        completed = bridge.run(
+            [gromacs_binary, "dump", *args, wsl_bridge.win_to_wsl(str(candidate))],
+            env_name=conda_environment,
+        )
     except Exception as exc:  # bridge errors are useful diagnostics to callers
         return ValidationResult(False, f"{kind} validation failed to run: {exc}")
     diagnostic = (getattr(completed, "stderr", "") or getattr(completed, "stdout", "") or "").strip()
@@ -184,18 +190,27 @@ def _validate_binary(path: str | Path, kind: str, args: list[str], bridge: Any) 
     return ValidationResult(False, f"{kind} validation failed (exit {completed.returncode}): {diagnostic or 'no diagnostic output'}")
 
 
-def validate_tpr(path: str | Path, bridge: Any = wsl_bridge) -> ValidationResult:
-    return _validate_binary(path, "TPR", ["-s"], bridge)
+def validate_tpr(
+    path: str | Path, bridge: Any = wsl_bridge, *,
+    gromacs_binary: str = "gmx", conda_environment: str = wsl_bridge.DEFAULT_ENV,
+) -> ValidationResult:
+    return _validate_binary(path, "TPR", ["-s"], bridge, gromacs_binary, conda_environment)
 
 
-def validate_checkpoint(path: str | Path, bridge: Any = wsl_bridge) -> ValidationResult:
-    return _validate_binary(path, "Checkpoint", ["-cp"], bridge)
+def validate_checkpoint(
+    path: str | Path, bridge: Any = wsl_bridge, *,
+    gromacs_binary: str = "gmx", conda_environment: str = wsl_bridge.DEFAULT_ENV,
+) -> ValidationResult:
+    return _validate_binary(path, "Checkpoint", ["-cp"], bridge, gromacs_binary, conda_environment)
 
 
 def validate_stage_outputs(
     outputs: Mapping[str, str | Path],
     ligand_name: str | None = None,
     bridge: Any = wsl_bridge,
+    *,
+    gromacs_binary: str = "gmx",
+    conda_environment: str = wsl_bridge.DEFAULT_ENV,
 ) -> ValidationResult:
     """Validate all supplied stage outputs and summarize individual results."""
 
@@ -204,9 +219,9 @@ def validate_stage_outputs(
         "gro": validate_gro,
         "topology": lambda value: validate_topology(value, ligand_name),
         "top": lambda value: validate_topology(value, ligand_name),
-        "tpr": lambda value: validate_tpr(value, bridge),
-        "checkpoint": lambda value: validate_checkpoint(value, bridge),
-        "cpt": lambda value: validate_checkpoint(value, bridge),
+        "tpr": lambda value: validate_tpr(value, bridge, gromacs_binary=gromacs_binary, conda_environment=conda_environment),
+        "checkpoint": lambda value: validate_checkpoint(value, bridge, gromacs_binary=gromacs_binary, conda_environment=conda_environment),
+        "cpt": lambda value: validate_checkpoint(value, bridge, gromacs_binary=gromacs_binary, conda_environment=conda_environment),
     }
     details = {name: validators[name](value) for name, value in outputs.items() if name in validators}
     if not details:

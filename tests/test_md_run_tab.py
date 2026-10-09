@@ -150,6 +150,49 @@ def _set_stage_status(
 
 
 class MDRunTabTests(unittest.TestCase):
+    def test_md_run_respects_other_active_project_operations(self):
+        tab = MDRunTab()
+        self.addCleanup(tab.deleteLater)
+        tab.operation_blocked = lambda: True
+        with mock.patch.object(tab, "refresh_from_manifest") as refresh:
+            tab.start_run()
+            tab.resume_run()
+        refresh.assert_not_called()
+
+    def test_busy_includes_thread_finishing_after_result_signal(self):
+        tab = MDRunTab()
+        self.addCleanup(tab.deleteLater)
+        runner = mock.Mock()
+        runner.isRunning.return_value = True
+        tab._runner = runner
+        self.assertTrue(tab.is_busy())
+        tab._on_runner_finished(False, "Stopped")
+        self.assertTrue(tab.is_busy())
+        self.assertIs(tab._runner, runner)
+
+    def test_completed_production_hands_off_valid_recorded_analysis_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            _manifest(root)
+            filenames = ("md.tpr", "md.xtc", "md.edr")
+            for filename in filenames:
+                (root / filename).write_bytes(b"validated test artifact")
+            outputs = {name: str(root / name) for name in filenames}
+            _set_stage_status(root, StageName.PRODUCTION, StageStatus.COMPLETED, outputs)
+            tab = MDRunTab(artifact_validators=_validators())
+            self.addCleanup(tab.deleteLater)
+            tab.load_project(str(root))
+            handoffs = []
+            tab.production_completed.connect(handoffs.append)
+            tab._on_runner_finished(True, "Completed")
+            self.assertEqual(len(handoffs), 1)
+            self.assertEqual(handoffs[0]["topology"], str(root / "md.tpr"))
+            self.assertEqual(handoffs[0]["trajectory"], str(root / "md.xtc"))
+            self.assertEqual(handoffs[0]["energy"], str(root / "md.edr"))
+            (root / "md.xtc").unlink()
+            tab._on_runner_finished(True, "Completed")
+            self.assertEqual(len(handoffs), 1)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])

@@ -1,12 +1,16 @@
-# MolDynStudio v1.1.1
+# MolDynStudio v1.2.0
 
 Inventor: Adriano Marques Gonçalves (UNIARA)
 
 MolDynStudio is a PyQt5 desktop application for system preparation, real
 GROMACS molecular-dynamics execution, execution monitoring, and post-MD
 analysis. Version 1.1.0 replaces the former MD Run preview/mock flow with a
-stage-aware pipeline that launches the selected GROMACS executable. Analysis
-modules that do not launch external tools remain clearly labeled as previews.
+stage-aware pipeline that launches the selected GROMACS executable. Trajectory
+analyses execute locally with MDAnalysis and MDTraj. Advanced configuration
+pages without an execution backend remain clearly labeled as previews.
+
+See the [English user manual](assets/docs/USER_MANUAL.md) for the complete
+workflow, frame inspection and DockLens integration, and scientific references.
 
 It provides:
 
@@ -15,7 +19,7 @@ It provides:
 - Analysis page with RMSD/RMSF/SASA/PCA/MM-PBSA/MM-GBSA entry points and a CPPTRAJ script builder
 - `.mds` project save/load with 5-minute autosave
 - WSL2 installer script for Windows
-- Conda environment specification for GROMACS, AmberTools, MDAnalysis, MDTraj, ProDy, PyTraj, and Qt
+- Separate scientific Conda environment for GROMACS, AmberTools, MDAnalysis, MDTraj, and ProDy; native GUI dependencies are installed from `requirements.txt`
 
 ## Supported MD workflows
 
@@ -96,7 +100,8 @@ conda activate moldynstudio
 
 ## Minimal UI-Only Setup
 
-For interface testing without the full MD stack:
+For GUI and local trajectory analysis without installing external MD engines
+(Python 3.11 or newer):
 
 ```bash
 pip install -r requirements.txt

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import signal
+import io
 import subprocess
 import unittest
 from unittest import mock
@@ -19,6 +20,18 @@ def _process(lines: list[str], return_code: int = 0, pid: int = 1001) -> mock.Mo
 
 
 class GromacsRunnerPlatformTests(unittest.TestCase):
+    def test_native_windows_rejects_script_executables(self):
+        spec = gromacs_runner.CommandSpec("gmx.cmd", (), use_conda=False, use_wsl=False)
+        with (
+            mock.patch.object(gromacs_runner.os, "name", "nt"),
+            mock.patch.object(gromacs_runner.shutil, "which", return_value="C:/tools/gmx.cmd"),
+            mock.patch.object(gromacs_runner.subprocess, "Popen") as popen,
+        ):
+            runner = gromacs_runner.GROMACSRunner([spec])
+            with self.assertRaisesRegex(OSError, "script"):
+                runner._start_process(spec)
+            popen.assert_not_called()
+
     def test_linux_conda_commands_use_bridge_profile_loader_and_new_session(self):
         spec = gromacs_runner.CommandSpec("gmx", ("--version",))
         process = _process(["GROMACS version: 2024\n"])
@@ -105,6 +118,14 @@ class GromacsRunnerPlatformTests(unittest.TestCase):
 
 
 class GromacsRunnerLifecycleTests(unittest.TestCase):
+    def test_captured_stdout_is_closed_after_command_completes(self):
+        process = _process([])
+        process.stdout = io.StringIO("done\n")
+        spec = gromacs_runner.CommandSpec("tool", (), use_conda=False)
+        with mock.patch.object(gromacs_runner.subprocess, "Popen", return_value=process):
+            gromacs_runner.GROMACSRunner([spec]).run()
+        self.assertTrue(process.stdout.closed)
+
     def test_failure_of_second_command_prevents_third_command(self):
         commands = [
             gromacs_runner.CommandSpec("tool", (str(index),), use_conda=False)

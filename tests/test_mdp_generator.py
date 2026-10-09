@@ -42,6 +42,17 @@ class MDPGeneratorTests(unittest.TestCase):
 
         self.assertEqual(float(_settings(content)["dt"]), 0.000001)
 
+    def test_short_equilibration_uses_requested_steps_without_changing_force_field(self):
+        files = generate_all_mdp(MDParameters(force_field="CHARMM36m", nvt_steps=2000, npt_steps=3000))
+        self.assertEqual(_settings(files["nvt.mdp"])["nsteps"], "2000")
+        self.assertEqual(_settings(files["npt.mdp"])["nsteps"], "3000")
+        for stage in ("nvt.mdp", "npt.mdp"):
+            self.assertEqual(_settings(files[stage])["vdw-modifier"], "force-switch")
+        for value in (0, -1, 1.5, float("nan"), float("inf"), True):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "nvt_steps"):
+                    generate_all_mdp(MDParameters(nvt_steps=value))
+
     def test_all_standard_mdp_files_are_generated(self):
         files = generate_all_mdp(MDParameters())
         self.assertEqual(set(files), {"em.mdp", "nvt.mdp", "npt.mdp", "md.mdp"})
@@ -66,6 +77,18 @@ class MDPGeneratorTests(unittest.TestCase):
             generate_production_mdp(
                 MDParameters(timestep_fs=2.0, save_every_ps=0.001)
             )
+
+    def test_restrained_npt_scales_reference_center_and_uses_stable_barostat(self):
+        for force_field in ("AMBER99SB-ILDN", "CHARMM36m"):
+            with self.subTest(force_field=force_field):
+                files = generate_all_mdp(MDParameters(force_field=force_field))
+                npt = _settings(files["npt.mdp"])
+                self.assertEqual(npt["refcoord-scaling"], "com")
+                self.assertEqual(npt["pcoupl"], "C-rescale")
+                self.assertEqual(npt["define"], "-DPOSRES")
+                production = _settings(files["md.mdp"])
+                self.assertEqual(production["pcoupl"], "Parrinello-Rahman")
+                self.assertNotIn("refcoord-scaling", production)
 
     def test_only_restrained_equilibration_stages_define_posres(self):
         files = generate_all_mdp(MDParameters())

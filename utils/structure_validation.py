@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,10 +41,15 @@ class _AtomReference:
     residue_name: str
     chain: str
     residue_number: str
+    insertion_code: str
+
+    @property
+    def residue_identity(self) -> tuple[str, str, str, str]:
+        return self.residue_name, self.chain, self.residue_number, self.insertion_code
 
     @property
     def residue_label(self) -> str:
-        parts = [self.residue_name, self.chain, self.residue_number]
+        parts = [self.residue_name, self.chain, self.residue_number + self.insertion_code]
         return " ".join(part for part in parts if part)
 
 
@@ -68,6 +74,7 @@ def _pdb_atom(line: str) -> _AtomReference | None:
         residue_name=line[17:20].strip(),
         chain=line[21:22].strip(),
         residue_number=line[22:26].strip(),
+        insertion_code=line[26:27].strip(),
     )
 
 
@@ -86,6 +93,7 @@ def _link_atom(
         residue_name=line[residue_slice].strip(),
         chain=line[chain_index : chain_index + 1].strip(),
         residue_number=line[number_slice].strip(),
+        insertion_code=line[number_slice.stop : number_slice.stop + 1].strip(),
     )
 
 
@@ -94,16 +102,18 @@ def _as_protein_ligand_link(
     second: _AtomReference,
     *,
     source: str,
+    modified_residues: frozenset[tuple[str, str, str, str]],
 ) -> CovalentLigandLink | None:
-    if first.residue_name in AMINO_ACIDS:
-        protein, ligand = first, second
-    elif second.residue_name in AMINO_ACIDS:
-        protein, ligand = second, first
-    else:
+    first_is_protein = first.residue_name in AMINO_ACIDS or first.residue_identity in modified_residues
+    second_is_protein = second.residue_name in AMINO_ACIDS or second.residue_identity in modified_residues
+    if first_is_protein == second_is_protein:
         return None
+    if first_is_protein:
+        protein, ligand = first, second
+    else:
+        protein, ligand = second, first
     if (
-        ligand.residue_name in AMINO_ACIDS
-        or ligand.residue_name in IGNORED_HETERO_RESIDUES
+        ligand.residue_name in IGNORED_HETERO_RESIDUES
         or ligand.residue_name in BIOPOLYMER_HETERO_RESIDUES
         or not ligand.residue_name
     ):
@@ -117,82 +127,122 @@ def _as_protein_ligand_link(
     )
 
 
+def _modified_protein_residues(lines: Iterable[str]) -> frozenset[tuple[str, str, str, str]]:
+    """Recognize exact MODRES sites without replacing their chemical identity."""
+    return frozenset(
+        (line[12:15].strip(), line[16:17].strip(), line[18:22].strip(), line[22:23].strip())
+        for line in lines
+        if line[:6].strip() == "MODRES" and line[24:27].strip() in AMINO_ACIDS
+    )
+
+
+def _model_records(lines: Iterable[str]) -> Iterator[tuple[int | None, str]]:
+    """Keep MODEL blocks separate even if their declared identifiers repeat."""
+    scope = None
+    block = 0
+    for line in lines:
+        record = line[:6].strip()
+        if record == "MODEL":
+            block += 1
+            scope = block
+        elif record == "ENDMDL":
+            scope = None
+        yield scope, line
+
+
+def _coordinate_models(
+    records: Iterable[tuple[int | None, str]],
+) -> dict[int | None, dict[int, tuple[_AtomReference, ...]]]:
+    models: dict[int | None, dict[int, tuple[_AtomReference, ...]]] = {}
+    for scope, line in records:
+        if line[:6].strip() in {"ATOM", "HETATM"}:
+            atom = _pdb_atom(line)
+            if atom is not None:
+                atoms = models.setdefault(scope, {})
+                atoms[atom.serial] = (*atoms.get(atom.serial, ()), atom)
+    return models
+
+
+def _link_records(
+    lines: Iterable[str], modified_residues: frozenset[tuple[str, str, str, str]],
+) -> Iterator[CovalentLigandLink]:
+    for line in lines:
+        if line[:6].strip() != "LINK":
+            continue
+        first = _link_atom(line, atom_slice=slice(12, 16), residue_slice=slice(17, 20),
+                           chain_index=21, number_slice=slice(22, 26))
+        second = _link_atom(line, atom_slice=slice(42, 46), residue_slice=slice(47, 50),
+                            chain_index=51, number_slice=slice(52, 56))
+        link = _as_protein_ligand_link(first, second, source="LINK", modified_residues=modified_residues)
+        if link is not None:
+            yield link
+
+
+def _conect_serials(line: str) -> tuple[int, ...]:
+    # wwPDB columns 7–31 contain the source and up to four bonded atom serials.
+    try:
+        source = int(line[6:11])
+        targets = tuple(int(line[start:start + 5]) for start in range(11, 31, 5)
+                        if line[start:start + 5].strip())
+    except ValueError:
+        return ()
+    return (source, *targets)
+
+
+def _connected_atom_links(
+    atoms: dict[int, tuple[_AtomReference, ...]], serials: tuple[int, ...],
+    modified_residues: frozenset[tuple[str, str, str, str]],
+) -> Iterator[CovalentLigandLink]:
+    for first in atoms.get(serials[0], ()):
+        for serial in serials[1:]:
+            for second in atoms.get(serial, ()):
+                link = _as_protein_ligand_link(
+                    first, second, source="CONECT", modified_residues=modified_residues,
+                )
+                if link is not None:
+                    yield link
+
+
+def _conect_records(
+    records: Iterable[tuple[int | None, str]],
+    models: dict[int | None, dict[int, tuple[_AtomReference, ...]]],
+    modified_residues: frozenset[tuple[str, str, str, str]],
+) -> Iterator[CovalentLigandLink]:
+    for scope, line in records:
+        if line[:6].strip() != "CONECT":
+            continue
+        serials = _conect_serials(line)
+        if len(serials) > 1:
+            # Records outside MODEL blocks apply within each model independently.
+            candidates = models.values() if scope is None else (models.get(scope, {}),)
+            for atoms in candidates:
+                yield from _connected_atom_links(atoms, serials, modified_residues)
+
+
 def find_covalent_ligand_links(
     pdb_path: str | Path,
 ) -> tuple[CovalentLigandLink, ...]:
-    """Find explicit LINK/CONECT bonds between protein and hetero ligands."""
+    """Find explicit protein–ligand LINK/CONECT records, respecting MODEL scope.
 
+    MODRES annotations identify modified protein sites; they do not establish
+    force-field support. This check does not infer missing bonds from geometry.
+    """
     path = Path(pdb_path)
     if path.suffix.lower() != ".pdb":
         return ()
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    atoms: dict[int, _AtomReference] = {}
-    links: list[CovalentLigandLink] = []
-    seen: set[tuple[str, str, str, str]] = set()
-
-    for line in lines:
-        if line.startswith(("ATOM  ", "HETATM")):
-            atom = _pdb_atom(line)
-            if atom is not None:
-                atoms[atom.serial] = atom
-        elif line.startswith("LINK"):
-            first = _link_atom(
-                line,
-                atom_slice=slice(12, 16),
-                residue_slice=slice(17, 20),
-                chain_index=21,
-                number_slice=slice(22, 26),
-            )
-            second = _link_atom(
-                line,
-                atom_slice=slice(42, 46),
-                residue_slice=slice(47, 50),
-                chain_index=51,
-                number_slice=slice(52, 56),
-            )
-            link = _as_protein_ligand_link(first, second, source="LINK")
-            if link is not None:
-                key = (
-                    link.protein_atom,
-                    link.protein_residue,
-                    link.ligand_atom,
-                    link.ligand_residue,
-                )
-                if key not in seen:
-                    seen.add(key)
-                    links.append(link)
-
-    for line in lines:
-        if not line.startswith("CONECT"):
-            continue
-        fields = line.split()
-        if len(fields) < 3:
-            continue
-        try:
-            source_serial = int(fields[1])
-            bonded_serials = [int(value) for value in fields[2:]]
-        except ValueError:
-            continue
-        first = atoms.get(source_serial)
-        if first is None:
-            continue
-        for bonded_serial in bonded_serials:
-            second = atoms.get(bonded_serial)
-            if second is None or first.record == second.record:
-                continue
-            link = _as_protein_ligand_link(first, second, source="CONECT")
-            if link is None:
-                continue
-            key = (
-                link.protein_atom,
-                link.protein_residue,
-                link.ligand_atom,
-                link.ligand_residue,
-            )
-            if key not in seen:
-                seen.add(key)
-                links.append(link)
-    return tuple(links)
+    modified_residues = _modified_protein_residues(lines)
+    records = tuple(_model_records(lines))
+    models = _coordinate_models(records)
+    links: dict[tuple[str, str, str, str], CovalentLigandLink] = {}
+    for candidates in (
+        _link_records(lines, modified_residues),
+        _conect_records(records, models, modified_residues),
+    ):
+        for link in candidates:
+            key = (link.protein_atom, link.protein_residue, link.ligand_atom, link.ligand_residue)
+            links.setdefault(key, link)
+    return tuple(links.values())
 
 
 def ensure_noncovalent_complex(pdb_path: str | Path) -> None:
@@ -204,5 +254,8 @@ def ensure_noncovalent_complex(pdb_path: str | Path) -> None:
         "Covalent protein-ligand linkage detected: "
         f"{link.ligand_residue} ({link.ligand_atom}) - "
         f"{link.protein_residue} ({link.protein_atom}). "
-        "MolDynStudio currently supports non-covalent ligands only."
+        "Automatic preparation supports non-covalent ligands only. "
+        "This complete complex requires a validated custom topology with "
+        "parameters for the covalent adduct before MD; automatic ACPYPE/GAFF2 "
+        "parameterization is not suitable."
     )

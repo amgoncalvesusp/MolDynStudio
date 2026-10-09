@@ -20,6 +20,7 @@ class SettingsDefaults:
     default_output_folder: str = str(Path.home() / "MolDynStudio")
     gromacs_binary: str = "auto"
     cpptraj_binary: str = "auto"
+    docklens_binary: str = "auto"
     cores: int = 4
     gpu_mode: str = "Auto"
     theme: str = "Light"

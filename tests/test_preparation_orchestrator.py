@@ -86,6 +86,35 @@ def request(root: Path, ligand: str | None = None) -> PreparationRequest:
 
 
 class PreparationOrchestratorTests(unittest.TestCase):
+    def test_repreparation_discards_qc_for_previous_simulation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            preparation_request = request(root)
+            service = PreparationOrchestrator(
+                preparation_request, runner=MaterializingRunner(),
+                structure_validator=lambda _path: None,
+            )
+            service.run()
+            path = root / "moldynstudio_run.json"
+            manifest = load_manifest(path)
+            save_manifest(replace(manifest, metadata={
+                "owner": "researcher", "stage_qc": {"production": {"outcome": "passed"}},
+            }), path)
+            service.run()
+            self.assertEqual(load_manifest(path).metadata, {"owner": "researcher"})
+
+    def test_unsupported_charge_method_is_rejected_before_external_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = MaterializingRunner()
+            service = PreparationOrchestrator(
+                replace(request(root, "ligand.sdf"), charge_method="RESP"),
+                runner=runner, structure_validator=lambda _path: None,
+            )
+            with self.assertRaisesRegex(PreparationError, "charge method"):
+                service.run()
+            self.assertEqual(runner.commands, [])
+
     def test_worker_reports_executable_resolution_failure(self):
         for error in (FileNotFoundError("GROMACS executable not found: gmx"),
                       ValueError("A Windows .exe cannot be used inside WSL")):
@@ -215,6 +244,8 @@ class PreparationOrchestratorTests(unittest.TestCase):
             self.assertEqual(events, [("combine", "protein.gro", "ligand.gro"), ("patch", "topol.top", "ligand.itp")])
             editconf = runner.commands[2]
             self.assertEqual(editconf.argv[editconf.argv.index("-f") + 1], "complex.gro")
+            acpype = runner.commands[1]
+            self.assertEqual(acpype.argv[acpype.argv.index("-a") + 1], "gaff2")
 
     def test_success_writes_mdps_and_completes_manifest_after_validation(self):
         with tempfile.TemporaryDirectory() as tmp:

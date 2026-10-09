@@ -29,10 +29,14 @@ class CpptrajBuilderTests(unittest.TestCase):
 
         with patch("analysis.cpptraj_builder.wsl_bridge.run", return_value=completed) as run:
             widget.run_cpptraj()
+            self.assertTrue(widget._worker.wait(5000))
+            self.app.processEvents()
 
         run.assert_called_once_with(
             ["cpptraj"],
             input="parm system.pdb\nrun\n",
+            env_name=widget.settings.value("conda_environment"),
+            cwd=None,
             check=False,
         )
         self.assertIn("completed", widget.output.toPlainText())

@@ -35,7 +35,34 @@ python build/create_installer.py
 ```
 
 Build the Windows executable on Windows. Include `dist/licenses` alongside
-`dist/MolDynStudio.exe` in the ZIP. Build the Linux source installer on Linux:
+`dist/MolDynStudio.exe` in the ZIP.
+
+Run the complete executable before archiving it:
+
+```
+dist/MolDynStudio.exe --self-check self-check-windows.json
+```
+
+On Linux, run the installed launcher with the same arguments. The JSON report
+and companion log cover native MDAnalysis/MDTraj distance calculations,
+PDBFixer parsing, one OpenMM CPU integration step, ParmEd topology writing, and
+construction of every main GUI page using Qt's offscreen platform. The checks
+run in an isolated process and return a nonzero exit status on a Python error,
+native crash, timeout, or incomplete report. This packaging test does not
+replace a real GROMACS simulation or validate scientific force-field choices.
+
+For OpenMM, install the current official Microsoft Visual C++ x64 Redistributable
+on the build host, or set `MOLDYN_MSVC_RUNTIME_DIR` to its extracted runtime DLL
+directory. The hook selects the newest complete runtime family from this path,
+System32, and the Qt wheel; it never replaces newer Qt files with older system
+files. Versions below 14.40 fail the build because their mutex implementation can
+crash current OpenMM binaries. Record and test the exact selected family: the
+14.40 check is a compatibility floor, not a guarantee for every future compiler.
+The build embeds its version/hash manifest under `assets/licenses/runtime` and
+copies it to `dist/licenses`. Official downloads and terms:
+https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist.
+
+Build the Linux source installer on Linux:
 
 ```
 python build/create_linux_installer.py
@@ -67,3 +94,25 @@ The Qt wheels are upstream Riverbank wheels, not a custom MolDynStudio Qt fork.
 To use a modified Qt, build it with the appropriate Windows compiler and use
 Riverbank's documented build/bundle workflow, then rebuild MolDynStudio above.
 All redistribution must preserve the applicable third-party terms.
+
+## Assemble a new release
+
+Use `build/prepare_release_materials.py` after both platform checks pass and the
+application source commit is fixed. Supply the fresh Windows ZIP, Linux `.run`,
+and a source ZIP produced from that exact commit. The required arguments are
+`--version`, `--revision` (the full commit SHA), `--windows`, `--linux`, `--source`,
+`--output`, and `--cache`. Use a new output directory for each assembly; existing
+release artifacts are never overwritten.
+
+The assembler reads the Windows runtime manifest, downloads matching source
+distributions, and checks published PyPI and Qt SHA-256 digests. OpenMM wheels
+record their own source commit; the license collector reads that value without
+loading the native engine. When PyPI has no OpenMM source distribution, the
+assembler retrieves that exact official GitHub commit and records the archive's
+calculated SHA-256. This calculated digest is not an upstream signature.
+
+Outputs include the original application source, both installers, upstream
+source archives, original notice texts in the Windows ZIP, artifact provenance,
+and a checksum file. Cached sources with mismatched or missing checksums are
+rejected. Application source archives containing `.worktrees` are rejected.
+Assembly performs no Git push, tag creation, or release publication.

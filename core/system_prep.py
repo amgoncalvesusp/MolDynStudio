@@ -59,6 +59,9 @@ WATER_MODEL_MAP: Mapping[str, str] = {
 }
 
 def build_ions_mdp(force_field: str) -> str:
+    # This TPR is consumed only by genion for random solvent replacement.
+    # PME would warn about the charge that this very step is meant to neutralize.
+    # All subsequently executed minimization/MD stages retain PME.
     if force_field.upper().startswith("CHARMM"):
         nonbonded = """cutoff-scheme = Verlet
 nstlist       = 20
@@ -67,7 +70,7 @@ vdwtype       = cutoff
 vdw-modifier  = force-switch
 rvdw-switch   = 1.0
 rvdw          = 1.2
-coulombtype   = PME
+coulombtype   = Cut-off
 rcoulomb      = 1.2
 DispCorr      = no"""
     else:
@@ -75,8 +78,8 @@ DispCorr      = no"""
 nstlist       = 10
 rcoulomb      = 1.0
 rvdw          = 1.0
-coulombtype   = PME"""
-    return f"""; MolDynStudio - minimization preset for ion addition
+coulombtype   = Cut-off"""
+    return f"""; MolDynStudio - preprocessing for ion placement only; never run with mdrun
 integrator      = steep
 emtol           = 1000.0
 emstep          = 0.01
@@ -186,6 +189,7 @@ class SystemPrepWorker(QThread):
         target.write_text(
             build_ions_mdp(self.p.force_field),
             encoding="utf-8",
+            newline="\n",
         )
 
     def run(self) -> None:  # QThread entry point

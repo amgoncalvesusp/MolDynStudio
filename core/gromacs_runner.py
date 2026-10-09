@@ -244,6 +244,9 @@ class GROMACSRunner(QThread):
             options["start_new_session"] = True
             mode = "posix_group"
         elif os.name == "nt":
+            resolved_executable = shutil.which(command[0]) or command[0]
+            if resolved_executable.lower().endswith((".bat", ".cmd")):
+                raise OSError("Windows script executables are unsupported; use WSL or a native executable.")
             creation_flag = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             if creation_flag:
                 options["creationflags"] = creation_flag
@@ -321,6 +324,9 @@ class GROMACSRunner(QThread):
                         self._emit_log(spec, raw_line.rstrip("\r\n"))
                 finally:
                     return_code = self._process.wait()
+                    close_output = getattr(self._process.stdout, "close", None)
+                    if close_output is not None:
+                        close_output()
                     with self._state_lock:
                         self._process = None
                 if self._cancel_requested:

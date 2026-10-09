@@ -35,7 +35,7 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-build.txt
 
       - name: Unit, integration, and GUI smoke tests
-        run: python -m coverage run -m unittest discover -s tests
+        run: python -m coverage run -m pytest -q
 
       - name: Enforce core coverage
         run: python -m coverage report
@@ -62,6 +62,47 @@ jobs:
           Compress-Archive -Path dist/MolDynStudio.exe,dist/licenses -DestinationPath dist/MolDynStudio-windows-x86_64.zip -Force
           if (-not (Test-Path -LiteralPath dist/MolDynStudio-windows-x86_64.zip)) { throw "Windows archive was not created" }
 
+      - name: Validate freshly installed Linux runtime
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          install_root="$HOME/.local/share/moldynstudio-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export MOLDYNSTUDIO_INSTALL_DIR="$install_root/app"
+          export MOLDYNSTUDIO_BIN_DIR="$install_root/bin"
+          export XDG_DATA_HOME="$install_root/desktop"
+          export PYTHON="$(command -v python)"
+          bash dist/MolDynStudio-linux-x86_64.run 2>&1 | tee dist/installer-linux.log
+          "$MOLDYNSTUDIO_BIN_DIR/moldynstudio" --self-check "$GITHUB_WORKSPACE/dist/self-check-linux.json"
+          "$MOLDYNSTUDIO_INSTALL_DIR/.venv/bin/python" -m pip freeze > dist/self-check-linux-dependencies.txt
+          python -c "import json; report=json.load(open('dist/self-check-linux.json')); assert report['status']=='passed' and report['frozen'] is False"
+
+      - name: Validate full Windows executable runtime
+        if: runner.os == 'Windows'
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $report = Join-Path $PWD "dist/self-check-windows.json"
+          $executable = Join-Path $PWD "dist/MolDynStudio.exe"
+          $process = Start-Process -FilePath $executable -ArgumentList @("--self-check", "`"$report`"") -PassThru -Wait -WindowStyle Hidden
+          @{ native_exit_code = $process.ExitCode } | ConvertTo-Json | Set-Content -LiteralPath "dist/self-check-windows-process.json" -Encoding utf8
+          if ($process.ExitCode -ne 0) { throw "Packaged runtime self-check failed with exit code $($process.ExitCode)" }
+          if (-not (Test-Path -LiteralPath $report)) { throw "Packaged runtime self-check did not create its report" }
+          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($result.status -ne "passed" -or $result.frozen -ne $true) { throw "Expected a passing frozen-runtime report" }
+
+      - name: Upload packaged-runtime validation reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packaged-runtime-${{ runner.os }}
+          path: |
+            dist/self-check-*.json
+            dist/self-check-*.log
+            dist/self-check-*-dependencies.txt
+            dist/installer-linux.log
+          if-no-files-found: warn
+
       - name: Upload Linux installer
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -79,7 +120,7 @@ jobs:
           if-no-files-found: error
 
   real-gromacs-smoke:
-    name: Linux / real GROMACS 2026.3 smoke
+    name: Linux / real GROMACS 2025.4 smoke
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -104,17 +145,17 @@ jobs:
           conda-remove-defaults: true
 
       - name: Install pinned GROMACS build
-        run: conda install --yes "gromacs=2026.3=nompi_h26635d9_100"
+        run: conda install --yes "gromacs=2025.4=nompi_h26635d9_100"
 
       - name: Install pinned runner dependency
         run: |
-          python -m pip install --only-binary=:all: "PyQt5==5.15.11"
+          python -m pip install --only-binary=:all: "PyQt5==5.15.11" "MDAnalysis==2.10.0"
 
       - name: Verify smoke environment
         run: |
           conda list --full-name gromacs
           gmx --version | tee gromacs-version.txt
-          grep -Eq 'GROMACS version:.*2026\.3' gromacs-version.txt
+          grep -Eq 'GROMACS version:.*2025\.4' gromacs-version.txt
           python -c "from PyQt5.QtCore import QThread, pyqtSignal; print('PyQt5 runner signals available')"
 
       - name: Run real grompp and mdrun smoke test

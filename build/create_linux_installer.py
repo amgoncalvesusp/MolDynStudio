@@ -67,7 +67,11 @@ if [ -z "$payload_line" ]; then
 fi
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-  echo "ERROR: python3 not found. Install Python 3.10+ and re-run this installer." >&2
+  echo "ERROR: python3 not found. Install Python 3.11+ and re-run this installer." >&2
+  exit 1
+fi
+if ! "$PYTHON_BIN" -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
+  echo "ERROR: Python 3.11+ is required for trajectory analysis. Set PYTHON to a supported interpreter." >&2
   exit 1
 fi
 

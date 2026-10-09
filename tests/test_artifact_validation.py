@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+from core import wsl_bridge
 
 from core.artifact_validation import (
     ValidationResult,
@@ -142,10 +144,23 @@ class ArtifactValidationTests(unittest.TestCase):
             ]
             self.assertTrue(validate_tpr(tpr, bridge=bridge).ok)
             result = validate_checkpoint(cpt, bridge=bridge)
-            self.assertEqual(bridge.run.call_args_list[0].args[0], ["gmx", "dump", "-s", str(tpr)])
-            self.assertEqual(bridge.run.call_args_list[1].args[0], ["gmx", "dump", "-cp", str(cpt)])
+            self.assertEqual(bridge.run.call_args_list[0].args[0], ["gmx", "dump", "-s", wsl_bridge.win_to_wsl(str(tpr))])
+            self.assertEqual(bridge.run.call_args_list[1].args[0], ["gmx", "dump", "-cp", wsl_bridge.win_to_wsl(str(cpt))])
         self.assertFalse(result.ok)
         self.assertIn("fatal cpt diagnostic", result.message)
+
+    def test_binary_checks_convert_host_paths_before_crossing_wsl_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for validator, suffix, flag in ((validate_tpr, "tpr", "-s"), (validate_checkpoint, "cpt", "-cp")):
+                with self.subTest(suffix=suffix):
+                    path = self.write(directory, f"system with spaces.{suffix}", "placeholder")
+                    converted = f"/mnt/c/MD project/system with spaces.{suffix}"
+                    bridge = Mock()
+                    bridge.run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+                    with patch("core.artifact_validation.wsl_bridge.win_to_wsl", return_value=converted) as convert:
+                        self.assertTrue(validator(path, bridge=bridge).ok)
+                    convert.assert_called_once_with(str(path))
+                    self.assertEqual(bridge.run.call_args.args[0], ["gmx", "dump", flag, converted])
 
     def test_external_check_exception_is_reported(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -155,6 +170,38 @@ class ArtifactValidationTests(unittest.TestCase):
             result = validate_tpr(path, bridge=bridge)
         self.assertFalse(result.ok)
         self.assertIn("bridge unavailable", result.message)
+
+    def test_binary_checks_use_configured_gromacs_and_conda_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for validator, suffix, flag in ((validate_tpr, "tpr", "-s"), (validate_checkpoint, "cpt", "-cp")):
+                with self.subTest(suffix=suffix):
+                    path = self.write(directory, f"system.{suffix}", "placeholder")
+                    bridge = Mock()
+                    bridge.run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+                    result = validator(path, bridge=bridge,
+                                       gromacs_binary="/opt/gromacs/bin/gmx_mpi",
+                                       conda_environment="configured-md-env")
+                    self.assertTrue(result.ok)
+                    bridge.run.assert_called_once_with(
+                        ["/opt/gromacs/bin/gmx_mpi", "dump", flag, wsl_bridge.win_to_wsl(str(path))],
+                        env_name="configured-md-env",
+                    )
+
+    def test_stage_output_checks_forward_the_configured_backend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tpr = self.write(directory, "system.tpr", "placeholder")
+            cpt = self.write(directory, "system.cpt", "placeholder")
+            bridge = Mock()
+            bridge.run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            result = validate_stage_outputs(
+                {"tpr": tpr, "checkpoint": cpt}, bridge=bridge,
+                gromacs_binary="gmx_mpi", conda_environment="configured-md-env",
+            )
+            self.assertTrue(result.ok)
+            self.assertEqual(bridge.run.call_count, 2)
+            for call in bridge.run.call_args_list:
+                self.assertEqual(call.args[0][0], "gmx_mpi")
+                self.assertEqual(call.kwargs, {"env_name": "configured-md-env"})
 
     def test_validate_stage_outputs_reports_each_artifact(self):
         with tempfile.TemporaryDirectory() as directory:

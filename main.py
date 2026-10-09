@@ -11,10 +11,22 @@ from __future__ import annotations
 
 import sys
 
-from PyQt5.QtWidgets import QApplication, QDialog
-
-
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] in {"--self-check", "--bundle-check-worker"}:
+        if len(sys.argv) != 3:
+            raise SystemExit("Expected exactly one report JSON path.")
+        from core.bundle_check import run_self_check, worker_main
+
+        check = run_self_check if sys.argv[1] == "--self-check" else worker_main
+        return check(sys.argv[2])
+    if len(sys.argv) > 1 and sys.argv[1] == "--structure-repair-worker":
+        if len(sys.argv) != 3:
+            raise SystemExit("Expected exactly one reconstruction request JSON path.")
+        from core.repair_worker import main as run_repair_worker
+
+        return run_repair_worker(sys.argv[2])
+    from PyQt5.QtWidgets import QApplication, QDialog
+
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("MolDynStudio")
 

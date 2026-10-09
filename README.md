@@ -1,4 +1,4 @@
-# MolDynStudio v1.1.1
+# MolDynStudio v1.2.0
 
 Copyright (C) 2026 Adriano Marques Gonçalves.
 MolDynStudio is free software under the GNU General Public License version 3
@@ -27,11 +27,20 @@ MD Setup and MD Run support these workflows:
   NPT, and production MD.
 - **Protein + separate non-covalent ligand:** use an AMBER-family protein force
   field with the built-in ACPYPE/GAFF2 ligand parameterization path.
+- **CHARMM36m + non-covalent ligand:** submit a reviewed MOL2 with explicit
+  hydrogens to SwissParam MATCH, then convert the supported CHARMM parameters
+  locally with ParmEd. New submissions require explicit ligand-upload consent;
+  verified cached results can be reused offline.
+- **Multiple bound copies from a complex PDB:** use the CHARMM ligand route to
+  retain every matching ligand residue with its own heavy-atom coordinates.
+  The MOL2 supplies reviewed chemistry; exclusions of other compounds are explicit.
 
-Covalent protein–ligand structures and arbitrary automatic CGenFF ligand
-generation are unsupported. CHARMM36m remains available for systems whose
-residues are already provided by the locally imported force-field package; it
-does not add automatic CGenFF ligand generation.
+Covalent protein–ligand adducts and general metal-coordination parameterization
+remain unsupported. The MATCH route accepts a restricted isolated-ligand
+topology, checks chemical identity and expected charge, and records its
+provenance; it is not a general importer for arbitrary CGenFF patches. See the
+[English user manual](assets/docs/USER_MANUAL.md#45-prepare-a-noncovalent-ligand-with-charmm36m-and-match)
+for the complete workflow and the 6D15 example.
 
 ## Restarting an interrupted run
 
@@ -78,7 +87,7 @@ Releases page:
 - Windows: `MolDynStudio-windows-x86_64.zip`
 - Linux: `MolDynStudio-linux-x86_64.run`
 
-Use `SHA256SUMS.txt` from the release assets to verify downloads.
+Use `SHA256SUMS-v1.2.0.txt` from the release assets to verify downloads.
 
 ## Development
 
@@ -87,6 +96,36 @@ pip install -r requirements.txt
 python main.py
 python -m unittest discover -s tests
 ```
+
+For the full regression suite (including scientific checks written as pytest
+functions), run `python -m pytest -q`. The GUI environment now includes
+MDAnalysis and MDTraj for local analysis and trajectory frame inspection.
+Python 3.11 or newer is required. The default scientific environment pins
+GROMACS 2025.4 to keep generated TPR files compatible with MDAnalysis 2.10.
+GROMACS 2026 TPR files require a newer compatible reader or an explicitly
+converted, matching PDB/GRO structure for coordinate analyses. Those structures
+do not replace charge-aware topology for hydrogen-bond analysis.
+
+## Workflow guide and research evidence
+
+See the [English user manual](assets/docs/USER_MANUAL.md) for installation,
+system preparation, simulation, analysis, and the supported scientific methods.
+It includes verified literature references and explains the limits of each result.
+The [validation record](assets/docs/VALIDATION_REPORT.md) documents the audit,
+implemented integrations, measured test coverage, and remaining validation limits.
+
+The revised workflow executes selected trajectory analyses in background jobs,
+writes measured CSV tables with a provenance manifest, and hands completed
+production files to Analysis. The frame inspector exports a receptor and ligand
+from the same trajectory frame and opens that pair in a compatible DockLens
+installation. Review periodic boundaries and chemical typing before interpreting
+contacts; a single frame does not measure interaction occupancy.
+
+Reports & Export creates a ZIP evidence snapshot with SHA-256 records and the
+recorded stage states. Large/binary simulation files are hashed but not copied;
+retain their originals. Advanced configuration pages that do not execute a
+backend are explicitly marked as previews. QC summaries are heuristic stability
+checks, not demonstrations of convergence or binding affinity.
 
 See `README_GROMACS_Analysis_Studio_v11.md` for setup and release-build details.
 
@@ -97,8 +136,9 @@ From **MD Setup**, select **Download CHARMM36m** once. The application fetches
 the official package directly from the MacKerell Laboratory over HTTPS.
 Alternatively, use **Import package…** with the official
 `charmm36-feb2026_cgenff-5.0.ff.tgz` archive. MolDynStudio verifies
-its SHA-256 checksum and stores it in the local application cache. Subsequent
-simulations run without Internet access.
+its SHA-256 checksum and stores it in the local application cache. The protein
+force field is then available offline. New MATCH ligand parameters require a
+separate consented SwissParam request unless a verified matching cache exists.
 
 Version 1.1.1 also enforces CHARMM force-switch/cutoff settings when generating
 MDPs through the backend, blocks incompatible automatic GAFF2 ligand assignment,
@@ -106,9 +146,17 @@ rejects invalid/empty MD outputs, and preserves Linux force-field caches on upgr
 
 The current ligand workflow intentionally supports non-covalent ligands only.
 Automatic ACPYPE/GAFF2 parameterization is restricted to AMBER-family protein
-force fields. Covalent protein-ligand structures are detected and rejected
-before topology generation. Automatic generation of arbitrary CGenFF ligand
-parameters is not bundled.
+force fields. CHARMM36m uses SwissParam MATCH (CGenFF-derived) with local
+ParmEd 4.3.1 conversion. The expected net charge, explicit hydrogen pattern,
+atom identities, and connectivity must agree with the reviewed MOL2. Only the
+ligand is uploaded; protein files remain local. Covalent protein-ligand
+structures are detected and rejected before topology generation.
+
+MATCH-derived ligand parameters are not claimed equivalent to a licensed-server
+CGenFF 5.0 assignment. Ligand types are given unique names and combined with
+the protein through CHARMM/Lorentz–Berthelot mixing; missing intermolecular
+NBFIX corrections are not inferred. A short execution test does not validate
+these cross interactions or quantitative binding predictions.
 
 See `assets/forcefields/README.md` for the official package name, checksum,
 and redistribution note.

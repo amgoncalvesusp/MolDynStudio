@@ -33,6 +33,13 @@ license text; metadata alone is not a substitute for those texts.
 | Matplotlib | Matplotlib/PSF-derived license plus bundled fonts and other notices |
 | openpyxl | MIT; its dependencies have their own licenses |
 | PyInstaller bootloader | GPL with the PyInstaller exception; https://pyinstaller.org/en/stable/license.html |
+| Microsoft Visual C++ runtime | Microsoft redistribution terms; https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files |
+
+Windows builds containing OpenMM select a complete, current Microsoft Visual C++
+runtime family to replace older copies supplied by Qt. The embedded
+`openmm-msvc-runtime.json` records the selected source directory, file versions,
+and SHA-256 hashes. Microsoft retains ownership of these files; the application
+license does not change their redistribution terms.
 
 The installed Qt wheel's top-level license is not a complete inventory of
 Chromium's third-party code. The release additionally provides the full Qt

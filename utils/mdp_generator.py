@@ -37,6 +37,8 @@ class MDParameters:
     box_type: str = "Dodecahedron"
     box_padding_nm: float = 1.2
     ion_concentration_m: float = 0.15
+    nvt_steps: int = 50000
+    npt_steps: int = 50000
 
     def normalized(self) -> "MDParameters":
         """Return a validated, clamped copy suitable for file generation."""
@@ -44,6 +46,10 @@ class MDParameters:
         duration_ns = _positive_finite(self.duration_ns, "duration_ns")
         timestep_fs = _positive_finite(self.timestep_fs, "timestep_fs")
         save_every_ps = _positive_finite(self.save_every_ps, "save_every_ps")
+        for name in ("nvt_steps", "npt_steps"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer.")
 
         return replace(
             self,
@@ -110,7 +116,7 @@ def generate_nvt_mdp(params: MDParameters) -> str:
     return f"""; MolDynStudio NVT equilibration
 define                  = -DPOSRES
 integrator              = md
-nsteps                  = 50000
+nsteps                  = {params.nvt_steps}
 dt                      = {_format_mdp_float(params.timestep_fs / 1000.0)}
 nstxout-compressed      = 500
 nstenergy               = 500
@@ -135,7 +141,7 @@ def generate_npt_mdp(params: MDParameters) -> str:
     return f"""; MolDynStudio NPT equilibration
 define                  = -DPOSRES
 integrator              = md
-nsteps                  = 50000
+nsteps                  = {params.npt_steps}
 dt                      = {_format_mdp_float(params.timestep_fs / 1000.0)}
 nstxout-compressed      = 500
 nstenergy               = 500
@@ -148,7 +154,9 @@ tcoupl                  = V-rescale
 tc-grps                 = Protein Non-Protein
 tau_t                   = 0.1 0.1
 ref_t                   = {params.temperature_k:.1f} {params.temperature_k:.1f}
-pcoupl                  = Parrinello-Rahman
+; Scale restraint reference COM with the box, preserving internal reference geometry.
+refcoord-scaling        = com
+pcoupl                  = C-rescale
 pcoupltype              = isotropic
 tau_p                   = 2.0
 ref_p                   = {params.pressure_bar:.3f}

@@ -16,6 +16,18 @@ from core.project_manager import (
 
 
 class ProjectManagerTests(unittest.TestCase):
+    def test_failed_atomic_replace_preserves_saved_project_and_cleans_temp_file(self):
+        manager = ProjectManager()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "project.mds"
+            manager.save(path, {"name": "original"})
+            original = path.read_bytes()
+            with mock.patch("core.project_manager.os.replace", side_effect=OSError("disk unavailable")):
+                with self.assertRaisesRegex(OSError, "disk unavailable"):
+                    manager.save(path, {"name": "replacement"})
+            self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(list(Path(tmp).iterdir()), [path])
+
     def test_save_and_load_round_trip(self):
         manager = ProjectManager()
         with tempfile.TemporaryDirectory() as tmp:

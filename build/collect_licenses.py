@@ -3,13 +3,30 @@
 from __future__ import annotations
 
 import importlib.metadata
+import ast
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
+
+
+def source_revision(name: str, distribution) -> dict[str, str]:
+    """Read OpenMM's exact source commit without loading its native runtime."""
+    if name != "openmm":
+        return {}
+    source = Path(distribution.locate_file("openmm/version.py"))
+    for node in ast.parse(source.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "git_revision" for target in node.targets
+        ):
+            revision = ast.literal_eval(node.value)
+            if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision):
+                return {"source_revision": revision}
+    raise ValueError("OpenMM version.py does not identify an exact source revision.")
 
 
 def collect_runtime_licenses(repo_root: Path, destination: Path) -> None:
@@ -54,7 +71,8 @@ def collect_runtime_licenses(repo_root: Path, destination: Path) -> None:
             shutil.copy2(source, target)
             if entry.name != "METADATA":
                 copied.append(entry.as_posix())
-        manifest.append({"name": name, "version": distribution.version, "license_files": copied})
+        manifest.append({"name": name, "version": distribution.version, "license_files": copied,
+                         **source_revision(name, distribution)})
         if name != "pyinstaller":
             for raw_requirement in distribution.requires or ():
                 requirement = Requirement(raw_requirement)

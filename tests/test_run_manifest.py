@@ -115,6 +115,43 @@ class RunManifestTests(unittest.TestCase):
                     save_manifest(make_manifest(), path)
             self.assertEqual(path.read_text(encoding="utf-8"), "old-content")
 
+    def test_transient_windows_lock_is_retried_without_losing_old_manifest(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "manifest.json"
+            path.write_text("old-content", encoding="utf-8")
+            replace_file = os.replace
+            attempts = []
+            def temporarily_locked(source, target):
+                attempts.append(1)
+                if len(attempts) <= 2:
+                    self.assertEqual(path.read_text(), "old-content")
+                    error = PermissionError("OneDrive temporary lock")
+                    error.winerror = 5
+                    raise error
+                return replace_file(source, target)
+            with patch("core.run_manifest.os.replace", side_effect=temporarily_locked), \
+                 patch("time.sleep") as sleep:
+                save_manifest(make_manifest(), path)
+            self.assertEqual(len(attempts), 3)
+            self.assertEqual(sleep.call_count, 2)
+            self.assertEqual(load_manifest(path).protein_source, "protein.pdb")
+
+    def test_permanent_windows_lock_has_bounded_retries_and_preserves_old_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "manifest.json"
+            path.write_text("old-content", encoding="utf-8")
+            error = PermissionError("locked")
+            error.winerror = 32
+            with patch("core.run_manifest.os.replace", side_effect=error) as replace_file, \
+                 patch("time.sleep") as sleep:
+                with self.assertRaises(RunManifestError):
+                    save_manifest(make_manifest(), path)
+            self.assertEqual(replace_file.call_count, 6)
+            self.assertEqual(sleep.call_count, 5)
+            self.assertEqual(path.read_text(), "old-content")
+            self.assertEqual(list(Path(d).iterdir()), [path])
+
     def test_manifest_path(self):
         self.assertEqual(manifest_path("project"), Path("project") / MANIFEST_FILENAME)
 
