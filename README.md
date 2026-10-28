@@ -1,4 +1,4 @@
-# MolDynStudio v1.2.0
+# MolDynStudio v1.3.0
 
 Copyright (C) 2026 Adriano Marques Gonçalves.
 MolDynStudio is free software under the GNU General Public License version 3
@@ -42,6 +42,44 @@ provenance; it is not a general importer for arbitrary CGenFF patches. See the
 [English user manual](assets/docs/USER_MANUAL.md#45-prepare-a-noncovalent-ligand-with-charmm36m-and-match)
 for the complete workflow and the 6D15 example.
 
+Before execution, **Review MD run** opens the prepared settings and all four
+actual MDP files. Recorded MD Setup edits remain pending until restored or
+prepared again, blocking **Run All** and **Resume**. Older projects explicitly
+report an unrecorded setup comparison. **Check environment** probes the selected
+GROMACS build in the background; compiled GPU support does not establish actual
+GPU use. See the [run procedure](assets/docs/USER_MANUAL.md#51-execute-the-four-stages)
+and [candidate validation status](assets/docs/VALIDATION_REPORT.md#md-setup--md-run-review--27-october-2026).
+
+## Integrated 3D inspection
+
+Open **View > 3D structures and trajectories** for the project's dockable native
+viewer, initially below the workflow and detachable as a floating panel.
+**Inspect structure in 3D** on MD Setup and **Open Trajectory Viewer** on Analysis
+reuse that panel. Load a readable PDB/GRO or compatible TPR alone to inspect one
+structure, or add a matching trajectory for frame navigation, playback, and
+reader-reported time. Structure-only inspection has no simulation time and
+cannot export a molecular-dynamics frame to DockLens.
+
+The viewer reads frames from disk through MDAnalysis and uses the existing
+Matplotlib/Qt dependencies. It draws selected atoms and available source bonds
+without inferring connectivity. Large selections are reduced to about 6,000
+displayed atoms; export retains the full validated selections. Production
+completion offers the output paths; choose **Load 3D view** to open the reader.
+Saved sessions restore paths, selections, frame index, and panel visibility,
+then require that same explicit load and a fresh periodic-boundary review.
+See the [3D procedure](assets/docs/USER_MANUAL.md#91-open-and-navigate-the-integrated-3d-view)
+and [separate source validation status](assets/docs/VALIDATION_REPORT.md#integrated-3d-viewer--27-october-2026).
+
+In **Results Viewer > QC Dashboard**, click a measured plot point or choose a
+source file and row under **Measured points**, then **Show selected point in
+3D**. Generated analysis CSV files with their adjacent `analysis_manifest.json`
+link to exact source frames and times; RMSF points highlight the atom's source
+residue without changing export selections. Source and output hashes are
+checked before inspection. External series without this provenance remain
+readable, with an explicit explanation when 3D linking is unavailable.
+See the [linked-analysis procedure](assets/docs/USER_MANUAL.md#84-inspect-a-measured-point-in-3d)
+and [third-delivery checks](assets/docs/VALIDATION_REPORT.md#analysis-points-linked-to-3d--27-october-2026).
+
 ## Restarting an interrupted run
 
 For a production run with a valid `md.cpt` checkpoint, select **Resume
@@ -84,10 +122,12 @@ project/
 For a published release, download the matching installers from the GitHub
 Releases page:
 
-- Windows: `MolDynStudio-windows-x86_64.zip`
-- Linux: `MolDynStudio-linux-x86_64.run`
+- Windows: `MolDynStudio-windows-x86_64-v1.3.0.zip`
+- Linux: `MolDynStudio-linux-x86_64-v1.3.0.run`
 
-Use `SHA256SUMS-v1.2.0.txt` from the release assets to verify downloads.
+Use `SHA256SUMS-v1.3.0.txt` from the release assets to verify downloads.
+See the [v1.3.0 release notes](assets/docs/RELEASE_NOTES_v1.3.0.md) for changes,
+validation, and remaining scientific and platform limits.
 
 ## Development
 

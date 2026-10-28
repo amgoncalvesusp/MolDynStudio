@@ -101,7 +101,10 @@ class PreparationOrchestratorTests(unittest.TestCase):
                 "owner": "researcher", "stage_qc": {"production": {"outcome": "passed"}},
             }), path)
             service.run()
-            self.assertEqual(load_manifest(path).metadata, {"owner": "researcher"})
+            metadata = load_manifest(path).metadata
+            self.assertEqual(metadata["owner"], "researcher")
+            self.assertNotIn("stage_qc", metadata)
+            self.assertEqual(metadata["preparation_review"]["setup_snapshot"]["temperature"], 300.0)
 
     def test_unsupported_charge_method_is_rejected_before_external_commands(self):
         with tempfile.TemporaryDirectory() as tmp:

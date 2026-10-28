@@ -40,6 +40,7 @@ from core.run_manifest import (
 )
 from core.settings import SettingsStore
 from tabs.base import MolDynBasePage
+from windows.run_review_panel import RunReviewPanel
 
 try:
     configure_pyqt5_backend()
@@ -108,6 +109,8 @@ class MDRunTab(MolDynBasePage):
     """Thin Qt view over :class:`MDPipelineRunner` and a run manifest."""
 
     production_completed = pyqtSignal(object)
+    setup_requested = pyqtSignal()
+    execution_settings_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -121,6 +124,7 @@ class MDRunTab(MolDynBasePage):
         super().__init__(parent)
         self.settings = settings or SettingsStore()
         self.operation_blocked: Callable[[], bool] = lambda: False
+        self.before_run: Callable[[], bool] = lambda: True
         self._runner_factory = runner_factory
         self._capability_probe = capability_probe
         self._artifact_validators = artifact_validators or ArtifactValidators()
@@ -147,6 +151,13 @@ class MDRunTab(MolDynBasePage):
         self.project_context.setWordWrap(True)
         self.project_context.setObjectName("ProjectContext")
         outer.addWidget(self.project_context)
+
+        self.review_panel = RunReviewPanel(capability_probe, self,
+                                          operation_blocked=lambda: self.is_busy() or self.operation_blocked())
+        self.review_panel.state_changed.connect(lambda: self._set_controls_active(self._active))
+        self.review_panel.setup_requested.connect(self.setup_requested)
+        self.review_panel.settings_requested.connect(self.execution_settings_requested)
+        outer.addWidget(self.review_panel)
 
         control = QGroupBox("Pipeline Control")
         control_layout = QVBoxLayout(control)
@@ -229,7 +240,7 @@ class MDRunTab(MolDynBasePage):
 
     def is_busy(self) -> bool:
         """Keep the project locked until the worker thread has fully exited."""
-        return self._active or bool(
+        return self._active or self.review_panel.is_busy() or bool(
             self._runner is not None
             and getattr(self._runner, "isRunning", lambda: False)()
         )
@@ -261,6 +272,7 @@ class MDRunTab(MolDynBasePage):
         self._manifest = None
         self._preparation_valid = False
         if self._project_dir is None or self._manifest_file is None:
+            self.review_panel.set_project(None, self._project_dir)
             self.project_context.setText("No prepared MD project loaded.")
             self._show_all_stages(StageStatus.NOT_READY)
             self._disable_resume_options()
@@ -275,6 +287,7 @@ class MDRunTab(MolDynBasePage):
                     "Manifest project directory does not match the loaded MD project."
                 )
         except Exception as exc:
+            self.review_panel.set_project(None, self._project_dir)
             self.project_context.setText(
                 f"Project not ready: {self._project_dir}"
             )
@@ -285,6 +298,7 @@ class MDRunTab(MolDynBasePage):
             return
 
         self._manifest = manifest
+        self.review_panel.set_project(manifest, self._project_dir)
         self.project_context.setText(f"Prepared project: {self._project_dir}")
         for stage in _DYNAMICS_STAGES:
             try:
@@ -305,6 +319,9 @@ class MDRunTab(MolDynBasePage):
             self._append_ui_message("Wait for the current project operation before starting MD.")
             return
         self.refresh_from_manifest()
+        if self.review_panel.pending:
+            self._append_ui_message("Apply or undo pending MD Setup changes before running.")
+            return
         if self._manifest is None or not self._preparation_valid:
             self._append_ui_message(
                 "Run All is unavailable until MD preparation artifacts validate."
@@ -332,6 +349,9 @@ class MDRunTab(MolDynBasePage):
             self._append_ui_message("Wait for the current project operation before resuming MD.")
             return
         self.refresh_from_manifest()
+        if self.review_panel.pending:
+            self._append_ui_message("Apply or undo pending MD Setup changes before resuming.")
+            return
         index = self.resume_selector.currentIndex()
         item = self.resume_selector.model().item(index)
         if self._manifest is None or item is None or not item.isEnabled():
@@ -387,6 +407,10 @@ class MDRunTab(MolDynBasePage):
     ) -> None:
         assert self._manifest is not None
         assert self._manifest_file is not None
+        if not self.before_run():
+            self._append_ui_message("Wait for the 3D frame operation before starting this project.")
+            return
+        self.review_panel.clear_failure()
         self._set_controls_active(True)
         try:
             executable = self._manifest.gromacs_binary
@@ -394,6 +418,7 @@ class MDRunTab(MolDynBasePage):
                 executable,
                 self._manifest.conda_environment,
             )
+            self.review_panel.show_capabilities(capabilities)
             if not capabilities.executable_ok:
                 detail = capabilities.version_text.strip() or "probe failed"
                 raise RuntimeError(f"GROMACS is not callable: {detail}")
@@ -409,6 +434,7 @@ class MDRunTab(MolDynBasePage):
             if hasattr(runner, "finished"):
                 runner.finished.connect(self._on_thread_finished)
         except Exception as exc:
+            self.review_panel.show_failure(str(exc))
             self._append_ui_message(f"Could not start the MD pipeline: {exc}")
             self._set_controls_active(False)
             return
@@ -421,6 +447,7 @@ class MDRunTab(MolDynBasePage):
         except Exception as exc:
             self._runner = None
             self._set_controls_active(False)
+            self.review_panel.show_failure(str(exc))
             self._append_ui_message(f"Could not start the MD pipeline: {exc}")
 
     def _make_runner(
@@ -558,10 +585,13 @@ class MDRunTab(MolDynBasePage):
 
     def _set_controls_active(self, active: bool) -> None:
         self._active = active
-        self.run_button.setEnabled(not active and self._preparation_valid)
+        ready = not active and self._preparation_valid and not self.review_panel.pending
+        self.run_button.setEnabled(ready)
         self.stop_button.setEnabled(active)
         self.clear_log_button.setEnabled(not active)
-        self.resume_selector.setEnabled(not active and self._preparation_valid)
+        self.resume_selector.setEnabled(ready)
+        self.review_panel.environment_button.setEnabled(not active and self._manifest is not None
+                                                      and not self.review_panel.is_busy())
         self._update_resume_button()
 
     def _update_resume_button(self) -> None:
@@ -569,6 +599,7 @@ class MDRunTab(MolDynBasePage):
         item = self.resume_selector.model().item(index) if index >= 0 else None
         self.resume_button.setEnabled(
             not self._active
+            and not self.review_panel.pending
             and self.resume_selector.isEnabled()
             and item is not None
             and item.isEnabled()
@@ -713,6 +744,10 @@ class MDRunTab(MolDynBasePage):
             self._on_runner_finished(success, message)
 
     def _on_runner_finished(self, success: bool, message: str) -> None:
+        if not success:
+            self.review_panel.show_failure(message)
+        else:
+            self.review_panel.clear_failure()
         if self._runner is not None and getattr(self._runner, "isRunning", lambda: False)():
             self._pending_completion = (success, message)
             return
@@ -839,3 +874,10 @@ class MDRunTab(MolDynBasePage):
             "Outputs: Stage files and run manifest are persisted in the project\n"
             "Restart: Production resume requires a valid checkpoint and unchanged outputs"
         )
+
+    def set_setup_state(self, snapshot: dict) -> None:
+        self.review_panel.set_setup_state(snapshot)
+        self._set_controls_active(self._active)
+
+    def open_review(self) -> None:
+        self.review_panel.open_review()

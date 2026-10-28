@@ -255,6 +255,10 @@ class AnalysisTab(MolDynBasePage):
         dialog.exec_()
 
     def open_trajectory_viewer(self) -> None:
+        opener = getattr(self, "viewer_opener", None)
+        if opener is not None:
+            opener(self.fields["topology"].text(), self.fields["trajectory"].text())
+            return
         viewer = getattr(self, "_viewer", None)
         if viewer is not None and hasattr(viewer, "is_busy") and viewer.is_busy():
             viewer.raise_()

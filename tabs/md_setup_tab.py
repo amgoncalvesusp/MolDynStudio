@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from http.client import HTTPException
 from pathlib import Path
-from typing import Callable
 
+from PyQt5.QtCore import QEvent, Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,15 +21,14 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSplitter,
     QSpinBox,
+    QSplitter,
     QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtCore import QEvent, QThread, Qt, pyqtSignal
 
 from core.forcefield_manager import (
     CHARMM36_ARCHIVE_NAME,
@@ -39,14 +39,20 @@ from core.forcefield_manager import (
 )
 from core.preparation_orchestrator import PreparationRequest, PreparationWorker
 from core.run_manifest import manifest_path
+from core.run_review import setup_review_snapshot
 from core.settings import SettingsStore
 from core.system_prep import SystemPrepParams
 from tabs.base import MolDynBasePage, PathSelector
 from utils.file_validators import validate_md_inputs
 from utils.mdp_generator import MDParameters, generate_all_mdp
 from utils.tooltips import tooltip
+from windows.ligand_setup_controls import (
+    build_charmm_controls,
+    charmm_request_options,
+    reset_ligand_consent,
+)
 from windows.mdp_editor import MDPEditor
-from windows.ligand_setup_controls import build_charmm_controls, charmm_request_options, reset_ligand_consent
+from windows.setup_protocol_controls import build_protocol_controls
 from windows.structure_repair_dialog import StructureRepairDialog
 
 
@@ -73,6 +79,8 @@ class ForceFieldImportWorker(QThread):
 
 class MDSetupTab(MolDynBasePage):
     project_prepared = pyqtSignal(str, str)
+    setup_changed = pyqtSignal(object)
+    review_requested = pyqtSignal()
 
     def __init__(self, parent=None, settings=None):
         super().__init__(parent)
@@ -80,6 +88,7 @@ class MDSetupTab(MolDynBasePage):
         self._preparation_active = False
         self._structure_repair_dialog = None
         self.operation_blocked: Callable[[], bool] = lambda: False
+        self.before_preparation: Callable[[], bool] = lambda: True
         outer = QVBoxLayout(self)
         title = QLabel("MD Setup")
         title.setObjectName("PageTitle")
@@ -107,7 +116,7 @@ class MDSetupTab(MolDynBasePage):
         self._build_system_inputs(left_layout)
         self._build_parameterization(left_layout)
         self._build_steps(left_layout)
-        self._build_production(left_layout)
+        build_protocol_controls(self, left_layout)
         left_layout.addStretch(1)
         self._refresh_charmm_status()
 
@@ -126,12 +135,49 @@ class MDSetupTab(MolDynBasePage):
         preview_layout.addWidget(self.preview)
         right_layout.addWidget(preview_group, 2)
 
+        self.review_run_button = QPushButton("Review MD run")
+        self.review_run_button.setAccessibleName("Review prepared MD run")
+        self.review_run_button.setToolTip("Review the prepared system, actual MDP files and execution environment in MD Run.")
+        self.review_run_button.clicked.connect(self._request_run_review)
+        right_layout.addWidget(self.review_run_button)
+
         for widget in self.fields.values():
             if hasattr(widget, "valueChanged"):
                 widget.valueChanged.connect(self.refresh_preview)  # type: ignore[attr-defined]
             if hasattr(widget, "currentTextChanged"):
                 widget.currentTextChanged.connect(self.refresh_preview)  # type: ignore[attr-defined]
+        for key in ("project_dir", "protein", "ligand"):
+            self.fields[key].line_edit.textChanged.connect(self.refresh_preview)
         self.refresh_preview()
+        self._last_review_snapshot = self.review_snapshot()
+        for widget in self.fields.values():
+            if isinstance(widget, PathSelector):
+                widget.line_edit.textChanged.connect(self._emit_setup_state)
+            elif isinstance(widget, QLineEdit):
+                widget.textChanged.connect(self._emit_setup_state)
+            elif isinstance(widget, QCheckBox):
+                widget.toggled.connect(self._emit_setup_state)
+            elif isinstance(widget, QComboBox):
+                widget.currentTextChanged.connect(self._emit_setup_state)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                widget.valueChanged.connect(self._emit_setup_state)
+
+    def review_snapshot(self) -> dict:
+        return setup_review_snapshot(self.get_state())
+
+    def _emit_setup_state(self, *_args) -> None:
+        if self.signalsBlocked():
+            return
+        snapshot = self.review_snapshot()
+        if snapshot != self._last_review_snapshot:
+            self._last_review_snapshot = snapshot
+            self.setup_changed.emit(dict(snapshot))
+
+    def _request_run_review(self) -> None:
+        if self.is_busy() or self.operation_blocked():
+            self.request_log.emit("Wait for the active project operation before reviewing another run.")
+            return
+        self.review_requested.emit()
 
     def _build_system_inputs(self, parent: QVBoxLayout) -> None:
         group = QGroupBox("System Input")
@@ -291,6 +337,14 @@ class MDSetupTab(MolDynBasePage):
         if self.is_busy():
             self.request_log.emit("MD Setup inputs cannot change while a project task is active.")
             return
+        blocked = self.blockSignals(True)
+        try:
+            self._restore_setup_fields(state)
+        finally:
+            self.blockSignals(blocked)
+        self._emit_setup_state()
+
+    def _restore_setup_fields(self, state: dict) -> None:
         if self._structure_repair_dialog is not None:
             self._structure_repair_dialog.reset_session()
             self._structure_repair_dialog.deleteLater()
@@ -365,64 +419,6 @@ class MDSetupTab(MolDynBasePage):
             f"Verified structural repair adopted: {candidate_path}. "
             "Structural readiness does not establish force-field or covalent topology readiness."
         )
-
-    def _build_production(self, parent: QVBoxLayout) -> None:
-        group = QGroupBox("Production MD Parameters")
-        form = QFormLayout(group)
-        self.fields["duration"] = QDoubleSpinBox()
-        self.fields["duration"].setDecimals(3)
-        self.fields["duration"].setRange(0.001, 1_000_000)
-        self.fields["duration"].setValue(100.0)
-        self.fields["duration"].setToolTip(tooltip("duration"))
-        form.addRow("Duration (ns)", self.fields["duration"])
-
-        self.fields["timestep"] = QDoubleSpinBox()
-        self.fields["timestep"].setDecimals(3)
-        self.fields["timestep"].setRange(0.001, 100.0)
-        self.fields["timestep"].setValue(2.0)
-        self.fields["timestep"].setToolTip(tooltip("timestep"))
-        form.addRow("Timestep (fs)", self.fields["timestep"])
-
-        self.fields["temperature"] = QDoubleSpinBox()
-        self.fields["temperature"].setRange(1.0, 1000.0)
-        self.fields["temperature"].setValue(300.0)
-        form.addRow("Temperature (K)", self.fields["temperature"])
-
-        self.fields["pressure"] = QDoubleSpinBox()
-        self.fields["pressure"].setDecimals(3)
-        self.fields["pressure"].setRange(0.001, 1000.0)
-        self.fields["pressure"].setValue(1.0)
-        form.addRow("Pressure (bar)", self.fields["pressure"])
-
-        self.fields["save_every"] = QDoubleSpinBox()
-        self.fields["save_every"].setDecimals(3)
-        self.fields["save_every"].setRange(0.001, 1_000_000.0)
-        self.fields["save_every"].setValue(10.0)
-        self.fields["save_every"].setToolTip(tooltip("save_every"))
-        form.addRow("Save every (ps)", self.fields["save_every"])
-
-        for key, label in (("nvt_steps", "NVT steps"), ("npt_steps", "NPT steps")):
-            self.fields[key] = QSpinBox()
-            self.fields[key].setRange(1, 1_000_000_000)
-            self.fields[key].setValue(50000)
-            form.addRow(label, self.fields[key])
-        self.short_test_button = QPushButton("Short pipeline test: 2 ps per MD stage")
-        self.short_test_button.setToolTip(
-            "Set 1 fs timestep, 2 ps each for NVT/NPT/production, and 0.2 ps production output. "
-            "A smoke test checks execution; it does not establish equilibration."
-        )
-        self.short_test_button.clicked.connect(self._use_short_pipeline_test)
-        form.addRow(self.short_test_button)
-        row = QHBoxLayout()
-        save = QPushButton("Save .MDP Files")
-        save.clicked.connect(self.save_mdp_files)
-        row.addWidget(save)
-        edit = QPushButton("Preview MDP")
-        edit.clicked.connect(self.open_mdp_editor)
-        row.addWidget(edit)
-        row.addStretch(1)
-        form.addRow(row)
-        parent.addWidget(group)
 
     def _use_short_pipeline_test(self) -> None:
         if self.is_busy() or self.operation_blocked():
@@ -547,6 +543,9 @@ class MDSetupTab(MolDynBasePage):
             structure_repair_report_sha256=approved_report_sha256,
             **ligand_options,
         )
+        if not self.before_preparation():
+            self.request_log.emit("Wait for the 3D frame operation before preparing this project.")
+            return
         self._prep_worker = PreparationWorker(request, parent=self)
         project_dir = Path(request.system.work_dir).expanduser().resolve()
         self._prep_worker.log.connect(lambda line: self.request_log.emit(line))

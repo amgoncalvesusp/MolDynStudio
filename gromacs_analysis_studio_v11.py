@@ -64,10 +64,11 @@ from tabs.md_run_tab import MDRunTab
 from tabs.md_setup_tab import MDSetupTab
 from tabs.qc_dashboard_tab import QCDashboardWidget
 from windows.help_dialog import HelpDialog
+from windows.project_viewer import ProjectViewerDock
 
 
 APP_NAME = "MolDynStudio"
-APP_VERSION = "v1.2.0"
+APP_VERSION = "v1.3.0"
 APP_INVENTOR = "Adriano Marques Gonçalves (UNIARA)"
 
 NAV_ITEMS = [
@@ -898,6 +899,7 @@ class MainWindow(QMainWindow):
         self.active_project_dir: Path | None = None
         self.active_manifest_path: Path | None = None
         self._project_context_was_cleared = False
+        self.viewer_dock: ProjectViewerDock | None = None
         self.project_manager = ProjectManager()
         self.settings = SettingsStore()
         self._autosave_timer = QTimer(self)
@@ -1051,12 +1053,23 @@ class MainWindow(QMainWindow):
         setup_page = self.pages["MD Setup"]
         if isinstance(setup_page, MDSetupTab):
             setup_page.project_prepared.connect(self._on_project_prepared)
+            setup_page.setup_changed.connect(self._on_setup_changed)
+            setup_page.review_requested.connect(self._review_md_run)
             setup_page.operation_blocked = lambda: self._work_in_progress(exclude="MD Setup")
+            setup_page.before_preparation = self._release_project_viewer
+            setup_page.inspect_3d_button = QPushButton("Inspect structure in 3D")
+            setup_page.inspect_3d_button.clicked.connect(
+                lambda: self.open_project_viewer(setup_page.fields["protein"].text(), ""))
+            setup_page.layout().insertWidget(1, setup_page.inspect_3d_button)
         run_page = self.pages["MD Run"]
         run_page.operation_blocked = lambda: self._work_in_progress(exclude="MD Run")
+        run_page.before_run = self._release_project_viewer
         run_page.production_completed.connect(self._on_production_completed)
+        run_page.setup_requested.connect(lambda: self.switch_to_page("MD Setup"))
+        run_page.execution_settings_requested.connect(self.open_preferences)
         analysis_page = AnalysisTab(settings=self.settings)
         analysis_page.operation_blocked = lambda: self._work_in_progress(exclude="Analysis")
+        analysis_page.viewer_opener = self.open_project_viewer
         self._add_page("Analysis", analysis_page)
         load_page = LoadSystemPage()
         load_page.operation_blocked = self._work_in_progress
@@ -1106,6 +1119,7 @@ class MainWindow(QMainWindow):
         self._add_page("End-Point Free Energy", FreeEnergyPage())
         self._add_page("Batch Comparison", BatchComparisonPage())
         self._add_page("Results Viewer", ResultsViewerPage())
+        self.pages["Results Viewer"].qc_dashboard.analysis_point_requested.connect(self.open_analysis_point)
         reports_page = ReportsPage(lambda: self.active_project_dir)
         reports_page.operation_blocked = lambda: self._work_in_progress(exclude="Reports & Export")
         self._add_page("Reports & Export", reports_page)
@@ -1141,6 +1155,9 @@ class MainWindow(QMainWindow):
             analysis_menu.addAction(action)
 
         view_menu = menu.addMenu("View")
+        viewer_action = QAction("3D structures and trajectories", self)
+        viewer_action.triggered.connect(lambda: self._ensure_project_viewer().show())
+        view_menu.addAction(viewer_action)
         for title, attribute in (("Workflow guidance", "side_info"), ("Run log", "log_group")):
             action = QAction(title, self)
             action.setCheckable(True)
@@ -1229,7 +1246,26 @@ class MainWindow(QMainWindow):
                     else "" if self._project_context_was_cleared else setup_project
                 )
                 run_page.load_project(project_dir)
+                self._sync_setup_review()
         self.side_info.setPlainText(self.context_text(name))
+
+    def _on_setup_changed(self, snapshot: object) -> None:
+        run_page = self.pages.get("MD Run")
+        if isinstance(run_page, MDRunTab):
+            run_page.set_setup_state(snapshot)
+            if self.nav.currentRow() == NAV_ITEMS.index("MD Run"):
+                self.run_btn.setEnabled(not run_page.review_panel.pending)
+
+    def _sync_setup_review(self) -> None:
+        setup_page = self.pages.get("MD Setup")
+        if isinstance(setup_page, MDSetupTab):
+            self._on_setup_changed(setup_page.review_snapshot())
+
+    def _review_md_run(self) -> None:
+        self.switch_to_page("MD Run")
+        run_page = self.pages.get("MD Run")
+        if isinstance(run_page, MDRunTab):
+            run_page.open_review()
 
     def switch_to_page(self, name: str):
         try:
@@ -1292,6 +1328,15 @@ class MainWindow(QMainWindow):
             self.switch_to_page("Results Viewer")
             self.append_log(f"Loaded {len(file_paths)} QC files into the dashboard.")
 
+    def open_analysis_point(self, source: str, row_index: int):
+        self._pause_project_viewer()
+        if self._work_in_progress():
+            message = "Point not opened: wait for the current project or 3D operation, then select it again."
+            self.pages["Results Viewer"].qc_dashboard.link_status.setText(message)
+            self.append_log(message)
+            return
+        self._ensure_project_viewer().inspect_analysis_point(source, row_index)
+
     def preview_current_page(self):
         self.show_preview(self.current_page().preview_text())
 
@@ -1310,6 +1355,7 @@ class MainWindow(QMainWindow):
             "current_page": self.nav.currentRow(),
             "pages": {name: page.get_state() for name, page in self.pages.items()},
             "project_context": self._serialized_project_context(),
+            "viewer_state": self.viewer_dock.get_state() if self.viewer_dock is not None else None,
         }
         return data
 
@@ -1344,10 +1390,11 @@ class MainWindow(QMainWindow):
         self._project_context_was_cleared = False
         if isinstance(run_page, MDRunTab):
             run_page.load_project(str(project))
+        self._sync_setup_review()
         self.append_log(f"Prepared MD project loaded: {project}")
 
     def _work_in_progress(self, exclude: str = "") -> bool:
-        return any(
+        return bool(exclude != "3D Viewer" and self.viewer_dock is not None and self.viewer_dock.is_busy()) or any(
             bool(page.is_busy())
             for name, page in self.pages.items()
             if name != exclude and callable(getattr(page, "is_busy", None))
@@ -1365,6 +1412,8 @@ class MainWindow(QMainWindow):
             page.set_backend(str(inputs.get("gromacs_binary", "")), str(inputs.get("conda_environment", "")))
         page.fields["qc_output"].setText("")
         self.append_log("Analysis inputs loaded. Review selections before starting an analysis.")
+        if self.viewer_dock is not None:
+            self.viewer_dock.offer_sources(str(inputs.get("topology", "")), str(inputs.get("trajectory", "")))
         return True
 
     def _on_production_completed(self, inputs: object) -> None:
@@ -1377,6 +1426,25 @@ class MainWindow(QMainWindow):
             for source, target in (("topology", "tpr_file"), ("trajectory", "trajectory_file"), ("energy", "energy_file")):
                 load_page.fields[target].setText(str(inputs.get(source, "")))
         self.append_log("Production outputs are ready in Analysis. Next: inspect the trajectory and generate QC results.")
+    def _ensure_project_viewer(self) -> ProjectViewerDock:
+        if self.viewer_dock is None:
+            self.viewer_dock = ProjectViewerDock(self, self.settings,
+                                               lambda: self._work_in_progress(exclude="3D Viewer"))
+            self.addDockWidget(Qt.BottomDockWidgetArea, self.viewer_dock)
+        return self.viewer_dock
+
+    def open_project_viewer(self, topology: str, trajectory: str = "") -> None:
+        if self._work_in_progress():
+            self.append_log("Pause playback or wait for the current project operation before opening the 3D view.")
+            return
+        self._ensure_project_viewer().show_sources(topology, trajectory)
+
+    def _release_project_viewer(self) -> bool:
+        return self.viewer_dock is None or self.viewer_dock.release_sources()
+
+    def _pause_project_viewer(self) -> None:
+        if self.viewer_dock is not None:
+            self.viewer_dock.viewer.pause()
 
     def _clear_project_context(self) -> None:
         self.active_project_dir = None
@@ -1456,6 +1524,8 @@ class MainWindow(QMainWindow):
         return states
 
     def _clear_session_results(self):
+        if self.viewer_dock is not None:
+            self.viewer_dock.clear_sources()
         self.pages["Results Viewer"].qc_dashboard.clear()
         analysis = self.pages["Analysis"]
         if callable(getattr(analysis, "reset_session", None)):
@@ -1472,10 +1542,12 @@ class MainWindow(QMainWindow):
         *,
         session_path: str | Path | None = None,
     ):
+        self._pause_project_viewer()
         if self._work_in_progress():
             self.append_log("Stop or finish the current operation before opening another project.")
             return
         states = self._validated_page_states(data)
+        viewer_state = ProjectViewerDock.validate_state(data.get("viewer_state"))
         try:
             current_page = int(data.get("current_page", 0))
         except (TypeError, ValueError) as exc:
@@ -1495,8 +1567,12 @@ class MainWindow(QMainWindow):
             if isinstance(run_page, MDRunTab):
                 run_page.load_project("")
         self.nav.setCurrentRow(max(0, min(current_page, len(NAV_ITEMS) - 1)))
+        if viewer_state:
+            self._ensure_project_viewer().set_state(viewer_state)
+        self._sync_setup_review()
 
     def new_session(self):
+        self._pause_project_viewer()
         if self._work_in_progress():
             self.append_log("Stop or finish the current operation before starting a new project.")
             return
@@ -1505,6 +1581,7 @@ class MainWindow(QMainWindow):
             page.set_state(deepcopy(self._initial_page_states[name]))
         self.log.clear()
         self._clear_project_context()
+        self._sync_setup_review()
         self.current_session_path = None
         self.nav.setCurrentRow(0)
         self.append_log("Started a new MolDynStudio project.")
@@ -1523,6 +1600,7 @@ class MainWindow(QMainWindow):
         self.append_log(f"Project saved to: {out_path}")
 
     def load_session(self):
+        self._pause_project_viewer()
         if self._work_in_progress():
             self.append_log("Stop or finish the current operation before opening another project.")
             return
@@ -1551,11 +1629,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Auto-save failed: {exc}", 5000)
 
     def closeEvent(self, event):
+        self._pause_project_viewer()
         if self._work_in_progress():
             self.append_log("An operation is still active. Stop it or wait for completion before closing MolDynStudio.")
             event.ignore()
             return
         self._autosave_timer.stop()
+        if self.viewer_dock is not None:
+            self.viewer_dock.clear_sources()
         event.accept()
 
 def main() -> int:

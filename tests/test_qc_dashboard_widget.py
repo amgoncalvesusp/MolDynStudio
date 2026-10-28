@@ -30,6 +30,20 @@ class QCDashboardWidgetTests(unittest.TestCase):
         self.assertEqual(widget.table.rowCount(), 1)
         self.assertIn("Overall status", widget.summary.toPlainText())
 
+    def test_clear_survives_a_hidden_canvas_collapsed_by_docking(self):
+        widget = QCDashboardWidget()
+        self.addCleanup(widget.close)
+        self.assertIsNotNone(widget.figure)
+        widget.figure.set_size_inches(0.1, 0.0)
+        widget.clear()
+        self.app.processEvents()
+        self.assertEqual(widget.table.rowCount(), 0)
+        self.assertIn("Load GROMACS", widget.summary.toPlainText())
+        widget.figure.set_size_inches(6.0, 4.0)
+        widget._draw_plot()
+        widget.canvas.draw()
+        self.assertIn("Load measured", widget.figure.axes[0].texts[0].get_text())
+
     def test_reimport_replaces_source_and_does_not_create_fake_replica(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "rmsd.xvg"

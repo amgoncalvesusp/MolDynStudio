@@ -1,6 +1,6 @@
 # Workflow audit and validation record
 
-Last updated: 9 October 2026. Scope: the accompanying MolDynStudio v1.2.0 source revision, based on commit `35a5e67`. The general workflow baseline was recorded on 7 October; the structure-repair and CHARMM/MATCH addenda record subsequent work separately. This record describes local validation, not a published binary release.
+Last updated: 27 October 2026. The 7–9 October results below describe the MolDynStudio v1.2.0 source scope based on commit `35a5e67`, with subsequent structure-repair and CHARMM/MATCH addenda. Separate sections record the later MD Setup → MD Run review and integrated 3D viewer candidates; earlier counts and packaged-runtime results do not validate either later scope. This record describes local validation, not a published binary release.
 
 ## Decisions made before implementation
 
@@ -229,6 +229,133 @@ Coverage uses the repository's configured omissions and is not whole-application
 The full Windows executable passed all six runtime self-checks. Its isolated repair worker also passed the synthetic reconstruction fixture: one oxygen was added, nine observed atoms remained at exactly their input positions, and the boron-containing BJI component and LINK/CONECT records were retained. This verifies that worker's execution and preservation behavior in the full executable. It does not demonstrate reconstruction of a covalent force-field topology or MD of complete 5T66 or 1ERM.
 
 A fresh Linux installation passed the same six runtime self-checks. These checks cover the bundled scientific libraries and GUI construction; they do not execute the external GROMACS workflow. They identify the diagnostic bundles tested during development. For a distributed build, use its release notes, `SHA256SUMS-v1.2.0.txt`, and `RELEASE-PROVENANCE-v1.2.0.json` to identify the exact assets and their verification results; this source record does not assert publication of a release.
+
+## MD Setup → MD Run review — 27 October 2026
+
+Status: source candidate verified on Windows and Ubuntu 24.04 under WSL2. The dated results above remain historical evidence for their stated scopes. These results identify the local source changes on top of `743a9bc8fe4a3ec861cba89379bd6a8f686c269c`, not a new installer or release.
+
+### Implemented source behavior
+
+Successful preparation adds a `preparation_review` record and canonical `setup_snapshot` to the existing run manifest. MD Run compares the prepared choices with the editable MD Setup draft; a mismatch blocks both Run All and Resume until the choices are restored or preparation is repeated. Older projects explicitly report an unrecorded comparison instead of being presented as matching. Their existing prerequisite checks and readable MDPs remain available.
+
+The read-only review reads the actual `em.mdp`, `nvt.mdp`, `npt.mdp`, and `md.mdp`, reports missing/unreadable files, and distinguishes the 2 ps execution test from an equilibrated protocol. The environment check uses a background worker with the recorded executable and Conda environment through the existing Windows/WSL or native Linux route. Reported GPU support describes the build; actual hardware use remains an `mdrun` execution result. Setup exposes essential duration/temperature/pressure controls and a collapsible Advanced protocol parameters group, plus Review MD run. Saved sessions preserve setup choices and recompute the comparison on restore. Failure guidance links the existing MD Setup, Settings, and Open project / logs actions.
+
+Source locations: `core/run_review.py`, `core/preparation_orchestrator.py`, `windows/run_review_panel.py`, `windows/setup_protocol_controls.py`, `tabs/md_setup_tab.py`, `tabs/md_run_tab.py`, and `gromacs_analysis_studio_v11.py`. The [user procedure](USER_MANUAL.md#51-execute-the-four-stages) describes the controls and scientific limits.
+
+### Completed candidate checks
+
+Full regression runs preceded final typing-only adjustments; the final source then passed the same 110 targeted tests and nine subtests on both platforms. Test-only and platform-specific skips remain explicit. Evidence is retained outside the repository in `C:/Users/adria/Documents/Codex/2026-10-26/p/work/moldyn-validation/`.
+
+| Check | Candidate status / evidence |
+| --- | --- |
+| Windows regression suite | 707 passed, two skipped, 175 subtests; Python 3.12.12. `windows/full-suite-final.log`. |
+| Linux/WSL regression suite | 705 passed, four skipped, 170 subtests; isolated Python 3.11.15. `linux/final-pytest-coverage.log`. |
+| Configured statement coverage on both platforms | Windows 85.19%; Linux 85.07%; existing 80% threshold and exclusions unchanged. `windows/coverage-full.json`, `linux/final-coverage.json`. |
+| Review/snapshot, pending gates, legacy manifests, session restore, and failure guidance | Final targeted suite: 110 passed and nine subtests on each platform. Separate measurement of the three new production modules, without the legacy GUI omissions: 92.97% combined statement/branch coverage (core review 96%, run review panel 89%, protocol controls 100%). `windows/coverage-features.json`, `linux/post-review-targeted-pytest.log`. |
+| Environment worker lifecycle and Windows/WSL/native routing | Busy-operation guards, same-directory repreparation invalidation, failure recovery, and final source checks passed. Six runtime self-check probes passed on each platform. Compiled GPU support is not a hardware-use measurement; execution tests used CPU. |
+| Ruff, compilation, dependency consistency, typing, and code review | Ruff's repository fatal-error checks and full checks for the new modules/tests passed; changed Python files compiled. `pip check` passed for both test environments. Mypy passed for the three new production modules. General and Python code reviews approved with no remaining findings. No new dependency advisory scan was run. |
+| Qt Setup → review → Run execution smoke | Actual Windows Qt controls prepared synthetic GLY-GLY through WSL/GROMACS 2025.4, enforced pending/undo, restored a session, and completed all four stages: 13 recorded commands, 2,232 atoms, 11 frames over 2 ps. The NVT QC warning remained recorded; the input PDB hash was unchanged. `windows/windows-wsl-setup-run.json`. |
+| Actual interruption and checkpoint continuation | A separate 50 ps production was stopped through Qt controls, saved a 55,032-byte checkpoint, and resumed to completion with `-cpi md.cpt`. The log confirms append; the final trajectory contains 251 strictly increasing frames from 0 to 50 ps. Input PDB unchanged. `windows/windows-wsl-checkpoint-verified.json`. |
+| Linux real-engine smoke | Four tests passed with GROMACS 2025.4, including argon preprocessing/minimization/TPR reading and CHARMM36m preparation/minimization. Direct WSL HTTPS timed out; the CHARMM smoke used the official archive downloaded on Windows and checked against the pinned SHA-256, replacing only the download response. Engine and command execution were real. `linux/linux-final-state.json`. |
+
+The checkpoint harness initially demanded an explicit `-append` flag after the physical continuation had completed. The selected GROMACS help reports append as the default. That assertion was corrected, and the existing log and trajectory were independently checked without rerunning MD; the original harness report is retained beside the verified report. Windows Qt screenshots were inspected with Segoe UI loaded in the offscreen harness; Linux GUI checks were headless. GPU execution and a Linux desktop visual review were not performed.
+
+No candidate installer or release claim follows from these source changes. The earlier 6D15 run remains a 2 ps operational check and cannot establish equilibration, sampling adequacy, binding stability, or parameter accuracy.
+
+### QwikMD reference provenance and limits
+
+The handoff design used static workflow observations from the [official QwikMD home](https://www.ks.uiuc.edu/Research/qwikmd/) and [manual](https://www.ks.uiuc.edu/Research/vmd/plugins/qwikmd/), retrieved on 27 October 2026, plus the official [Windows beta ZIP](https://www.ks.uiuc.edu/Research/qwikmd/qwikmd_beta_windows.zip). That ZIP is 220,160 bytes, has server Last-Modified 11 October 2019, and SHA-256 `64439fe716d46bd5109b27f084c6dc0666edb34464ab8d25142c04f2bfcb5707`. Its package declares QwikMD 1.2; this does not establish the newest plugin version.
+
+REA 6.8.0 recorded the archive inventory as `ev_82f0cb923275c084987943c16b824a24e0467070d5c767a2512b0b1a4819382f` and inspection as `ev_f4cff045bbd32260d03878f263ba669fd1e72aa147b9c38b497588635fca8cdb`. Inventory covered 16 regular members and one directory. Eight selected text resources were checked against member sizes and hashes. The external task-workspace directory `work/moldyn-qwikmd-investigation/` retains `FINDINGS.md`, `provenance.json`, `resource-hashes.json`, and the two-record `rea-evidence.json`; the evidence JSON SHA-256 is `68e61c81f39f1fa695ed84c3ced963fb507a0a7f3babceb8a079d5da8ad61b32`. Those local audit files are outside this repository.
+
+The resulting design inference was to separate preparation, review, and explicit start; keep exact prepared artifacts together; and require valid stage outputs before continuation. No downloaded Tcl, VMD, or NAMD was executed or installed, and no Tcl source or NAMD parameters were transferred into MolDynStudio. This historical Windows beta inspection does not establish current QwikMD runtime behavior, cross-engine parameter equivalence, or scientific suitability. REA inventory covers ZIP central-directory entries; static inspection is not a runtime test.
+
+## Integrated 3D viewer — 27 October 2026
+
+Status: **Source candidate verified on Windows and Linux/WSL2**. This is a separate source delivery after the MD Setup → MD Run review above. Its earlier results remain scoped to that delivery; the viewer checks below were performed separately. No new installer or release is claimed.
+
+### Implemented source behavior
+
+The project owns one native Qt dock, initially placed at the bottom and also usable at the right or as a floating panel. **View > 3D structures and trajectories**, **MD Setup > Inspect structure in 3D**, and **Analysis > Open Trajectory Viewer** share it. It reuses the existing MDAnalysis and Matplotlib/Qt dependencies. A readable structure without a trajectory supplies one frame and no simulation time; MD-frame export and playback remain disabled. A matching trajectory uses a disk-backed reader with zero-based frame navigation, Previous/Next, slider, Play/Pause, and reader time. Camera orientation and limits persist across frames, with an explicit refit control.
+
+The display supports MDAnalysis selections for available chain, residue, and ligand identities. It draws only source-topology bonds, without inferring connectivity. Selections are reduced to about 6,000 atoms for drawing; the existing exporter retains the complete validated receptor/ligand selections. Original coordinates and source files remain unchanged. File/reader/selection failures are reported explicitly. Structure inspection does not certify chemistry, parameter readiness, or periodic imaging.
+
+Viewer work participates in project busy and close guards. Preparation and MD execution close an idle reader first to release handles, including Windows file locks. Production completion offers source paths without opening a reader. Sessions store paths, selections, requested frame, and panel visibility; restoration requires **Load 3D view** and does not restore periodic-boundary consent or an exported pair. Existing DockLens export still requires a real trajectory, applied disjoint selections, complete ligand connectivity where available, explicit elements, and fresh periodic-image review.
+
+Source locations: `core/trajectory_frames.py`, `windows/trajectory_viewer.py`, `windows/project_viewer.py`, `gromacs_analysis_studio_v11.py`, `tabs/analysis_tab.py`, `tabs/md_setup_tab.py`, and `tabs/md_run_tab.py`. See the [3D inspection procedure](USER_MANUAL.md#91-open-and-navigate-the-integrated-3d-view).
+
+### Completed candidate checks
+
+The task evidence directory is `C:/Users/adria/Documents/Codex/2026-10-26/p/work/moldyn-viewer-validation/`. Both regression runs used default repository discovery, including the six existing scientific verification tests under `project/`; both collected the same 747 cases. Counts from the preceding delivery are not carried forward.
+
+| Check | Candidate status / evidence |
+| --- | --- |
+| Windows full regression suite and configured coverage | 745 passed, two opt-in engine tests skipped, 187 subtests. Existing statement-coverage configuration: 85.31%. `windows/full-suite-final.log`, `windows/coverage-final.json`. |
+| Linux/WSL full regression suite and configured coverage | 741 passed, six skipped, 180 subtests. Four additional skips are Windows launcher/Unicode checks; two are opt-in engine tests. Statement coverage: 85.00%. The 125 source/test/helper hashes were identical before/after the run. `linux/linux-validation-summary.json`, `linux/final-full-pytest.log`, `linux/final-full-coverage.json`. |
+| Structure-only loading, explicit read failures, source bonds, full-selection export | Windows targeted suite: 69 passed and 24 subtests. Explicit combined statement/branch coverage of core/frame reader, dock, and viewer: Windows 88.99%; Linux 86.63%. These measurements include GUI modules omitted by the old global coverage configuration. `windows/viewer-coverage.json`, `linux/final-viewer-coverage.json`. |
+| Shared dock routes, session restore, source handoff, playback, camera, and lifecycle guards | Qt journeys passed: shared Setup/Analysis dock, structure-only mode, navigation, playback/pause, restore of frame and selections, source replacement, close guards, and release before project writes. Failures invalidate PBC consent and cached exports. Zero-size hidden QC canvas regression was reproduced and fixed without changing QC data. |
+| Windows/WSL production handoff and source preservation | Actual Qt controls loaded a structure, released its reader before preparation, loaded the prepared GRO, released that reader before execution, and completed minimization/NVT/NPT/production via GROMACS 2025.4. The offered TPR/XTC then opened in 3D, with 11 frames, frame 10 at 2 ps, 16 known protein bonds, restored frame state, and unchanged source PDB. The project path contained spaces and accents. `windows/real-setup-run-viewer.json`. |
+| Screenshots and visual inspection | Existing centered 6D15 TPR/XTC copies were inspected on both platforms at frames 0/5/10 and times 0/1/2 ps: backbone 1,079 atoms/1,078 bonds; ligand 58 atoms/60 bonds. Source hashes were preserved. Windows screenshots used native Matplotlib/Qt offscreen with Segoe UI; Linux WSLg/xcb rendered initially, and the final New/Open journey passed offscreen after display sockets became unavailable. Final integrated and standalone screenshots were inspected. `windows/6d15-real-render.json`, `linux/offscreen-final/integrated-linux-smoke.json`. |
+| Lint, typing, compilation, dependency consistency, and code review | Repository fatal-error Ruff checks, stricter new-code checks including E402, compilation, dependency consistency, and general/Python reviews passed. Mypy passed for the viewer and dock; old reader typing diagnostics were not represented as a clean full-project type check. No new dependency advisory scan was run. Runtime self-checks passed six probes and retained all 15 navigation pages on each platform. |
+
+Real-file tests found a Windows XDR-reader limitation for non-ASCII XTC/TRR paths. The opener now uses a Windows ASCII short-path alias only when the alias identifies the same file; stored paths, source checks, and provenance retain the originals. The reader does not copy trajectories. If the filesystem supplies no suitable 8.3 alias, the error asks for ASCII-only paths. The initial failed smoke and the successful repeated workflow are retained separately. A second real-GUI issue, `tight_layout()` on a zero-height hidden QC figure after docking, was reproduced on both platforms and fixed with a positive-size guard.
+
+Eleven unchanged modules/tests from the first delivery were checked against their previously recorded hashes. GROMACS protocol generation, QC calculations, DockLens export contracts, and first-delivery review behavior were preserved. The short MD runs are operational checks; neither the visualization nor the 2 ps trajectory establishes equilibration or scientific suitability.
+
+## Analysis points linked to 3D — 27 October 2026
+
+Status: **Source candidate verified on Windows and Linux/WSL2**. This third source delivery connects the existing QC plots and measured tables to the shared native 3D panel. It adds no renderer, scientific backend, or dependency. Earlier delivery results above retain their original scopes. No new installer or release is claimed.
+
+### Implemented source behavior
+
+**Results Viewer > QC Dashboard** retains its summary table and adds a source selector, **Plot** / **Measured points** tabs, and **Show selected point in 3D**. A plot pick, measured-row double-click, or explicit button activation sends the exact source file and zero-based numeric row. Overlapping points or series require an explicit source/row choice. The plotted marker and measured-row selection refer to that observation, without resolving repeated residue numbers by proximity.
+
+The linked CSV must have an adjacent supported `analysis_manifest.json`, an exact completed result entry, an unchanged output hash/shape, and matching topology/trajectory fingerprints. A completed result from a partial analysis job is usable only when the manifest reports unchanged sources. The existing frame worker performs source hashing and reading. Time-series navigation uses the saved frame index and verifies the reader time against `time_ns`; no regular frame spacing or zero time origin is assumed. RMSF uses the saved atom index and atom/residue/segment metadata, validates them against the topology, and highlights the unique source residue at the current frame. This is a visual overlay of the existing per-atom RMSF result, not residue averaging or interaction analysis.
+
+Existing receptor/ligand selections and camera remain intact when sources match. The highlight is drawn in pink with a white outline above the molecular context so it remains visible. Ordinary frame navigation clears it. Export retains the existing complete, same-frame selections and periodic-boundary consent requirement; highlight atoms are not added to an exported selection. Read failures invalidate exports/consent and restore the prior reader cursor; a restoration failure explicitly requires reload. A second request during active work reports that its point was not opened. New/opened sessions clear the previous dashboard context.
+
+External XVG/CSV series remain readable without a verified link and display the reason for unavailable 3D navigation. Changed plotted data require reimport; changed source inputs require regenerated analysis. Absolute manifest paths must resolve on the current operating system; this delivery adds no automatic relocation or cross-OS path remapping.
+
+Source locations: `analysis/result_links.py`, `core/trajectory_frames.py`, `tabs/qc_dashboard_tab.py`, `windows/trajectory_viewer.py`, `windows/project_viewer.py`, and `gromacs_analysis_studio_v11.py`. See the [linked-analysis procedure](USER_MANUAL.md#84-inspect-a-measured-point-in-3d).
+
+### Completed candidate checks
+
+Evidence is stored separately under `C:/Users/adria/Documents/Codex/2026-10-26/p/work/moldyn-analysis-validation/`.
+
+| Check | Candidate status / evidence |
+| --- | --- |
+| Windows full regression suite and configured coverage | Default repository discovery collected 789 cases, including the six existing scientific verification tests under `project/`: 787 passed, two opt-in engine tests skipped, and 228 subtests. Existing statement-coverage configuration: 85.81%. `windows/full-suite-final.log`, `windows/full-coverage.json`, `windows/windows-validation-summary.json`. |
+| Linux/WSL2 full regression suite and configured coverage | The same default scope collected 789 cases: 783 passed, six skipped, and 221 subtests. Four additional skips are Windows launcher/Unicode checks. Existing statement coverage: 85.51%; explicit combined statement/branch coverage of result linking, frame reader, dashboard, dock, and viewer: 88.74%. Source hashes were identical before/after validation. `linux/final-validation-status.json`, `linux/final-full-pytest.log`, `linux/final-full-coverage.json`, `linux/final-viewer-coverage.json`. |
+| Exact row/source identity and failure handling | Unit/integration checks cover missing or malformed manifests, changed CSV/source hashes, changed row mappings, non-finite values, exact frame/time validation with nonzero/nonuniform times, repeated residue IDs in different segments, cursor rollback, overlapping plot points/series, and explicit rejection while busy. Focused checks include prior viewer/export behavior. |
+| Real Windows and Linux/WSL2 analyses and GUI | Existing centered 6D15 copies produced 11 RMSD points, 270 C-alpha RMSF points, and 11 radius-of-gyration points. The Windows Qt Analysis worker generated these outputs and handed them to the dashboard. Windows offscreen/Segoe UI and Linux native WSLg/xcb journeys selected RMSD row 10 to open frame 10 at 2 ps. RMSF row 45 identified atom 673 CA in CYS46, source residue index 45/segment 0, and highlighted its 10 atoms without changing export selections. The pink/white highlight was visually inspected. `windows/fixture-generation.json`, `linux/fixture-generation.json`, `windows/offscreen-gui/analysis-gui-smoke.json`, `linux/xcb-gui/analysis-gui-smoke.json`. |
+| Same-frame export and source preservation | Both real-file GUI journeys exported 4,017 protein and 58 ligand atoms from frame 10 at 2 ps. Exported coordinates matched the same source frame and original selection mappings; source hashes remained unchanged. The journeys checked ordinary-navigation overlay clearing, readable unlinked external data, invalid-source-hash rejection, and New-session clearing. `windows/offscreen-gui/analysis-gui-smoke.json`, `linux/xcb-gui/analysis-gui-smoke.json`. |
+| Explicit GUI/core coverage and final review | The same focused 111-case scope passed 111 tests/65 subtests on Windows and 107 tests/58 subtests on Linux, with four Windows-only cases skipped there. Combined statement/branch coverage including the GUI modules excluded by the old global configuration: Windows 90.11%, Linux 88.74%. The scope includes the zero-height hidden-QC-canvas regression. General/Python review approved the final changes without outstanding findings. `windows/feature-coverage.json`, `linux/final-viewer-coverage.json`. |
+| Runtime checks | All six existing runtime probes passed on each platform. The source GUI retained the existing native dependencies and 15 navigation pages. |
+
+These short stored trajectories test file identity, UI navigation, and export interoperability. They do not establish long-run performance, equilibration, interaction occupancy, or biological conclusions.
+
+## v1.3.0 release preparation — 27 October 2026
+
+The three delivery scopes above are included in v1.3.0. Release preparation
+raised both GUI requirement sets to Pillow 13.0.0+, filelock 4.2.1+,
+certifi 2026.10.19+, and setuptools 84.1.0+ after finding advisories in the
+previously installed versions. The upgraded Windows and Linux environments
+passed dependency consistency checks and advisory audits with no known
+vulnerabilities. The Linux audit covered all 50 installed distributions with no
+omissions; its bootstrap pip was also upgraded to 26.2.2.
+
+Post-upgrade full suites again passed 787 tests/228 subtests on Windows and
+783 tests/221 subtests on Linux, with the same two/six skips and 85.81%/85.51%
+configured statement coverage. Both runtime checks passed all six probes. The
+Linux native WSLg/xcb 6D15 journey again preserved frame navigation, residue
+highlighting, selections, source hashes, and exported coordinates. Ruff passed
+on the publishable Python files using the CI-pinned version 0.14.5.
+
+These local suites include six existing checks under the untracked project-data
+directory. Those data and checks are not part of the published application;
+clean-checkout CI collects 783 application cases. Build- and publication-specific
+results belong to the GitHub release notes and versioned provenance/checksum
+assets, rather than the earlier historical bundle checks in this document.
 
 ## Limits relevant to publication and use
 

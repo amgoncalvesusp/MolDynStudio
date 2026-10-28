@@ -73,7 +73,10 @@ class RepairPreparationHandoffTests(unittest.TestCase):
             manifest = load_manifest(path)
             save_manifest(replace(manifest, metadata={"structure_repair": {"old": True}, "owner": "lab"}), path)
             service.run()
-            self.assertEqual(load_manifest(path).metadata, {"owner": "lab"})
+            metadata = load_manifest(path).metadata
+            self.assertEqual(metadata["owner"], "lab")
+            self.assertNotIn("structure_repair", metadata)
+            self.assertEqual(metadata["preparation_review"]["setup_snapshot"]["structure_repair_report"], "")
 
     def test_replacing_candidate_and_report_together_does_not_change_reviewed_pair(self):
         with tempfile.TemporaryDirectory() as tmp:

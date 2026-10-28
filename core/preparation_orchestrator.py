@@ -40,6 +40,7 @@ from core.run_manifest import (
     save_manifest,
     utc_now_iso,
 )
+from core.run_review import build_preparation_review
 from core.system_prep import (
     SystemPrepParams,
     build_box_solvent_ion_steps,
@@ -563,6 +564,11 @@ class PreparationOrchestrator:
         if water_evidence := self._manifest.metadata.get("crystal_waters"):
             outputs["crystal_waters/provenance.json"] = water_evidence["provenance_path"]
             outputs["crystal_waters/waters.gro"] = water_evidence["water_gro"]
+        self._manifest = replace(
+            self._manifest,
+            metadata={**self._manifest.metadata,
+                      "preparation_review": build_preparation_review(self.request)},
+        )
         now = utc_now_iso()
         self._replace_stage(
             StageName.PREPARATION,
@@ -647,7 +653,7 @@ class PreparationOrchestrator:
         self._manifest = replace(
             manifest,
             metadata={key: value for key, value in manifest.metadata.items()
-                      if key not in {"stage_qc", "structure_repair", "ligand_parameterization", "complex_inputs", "crystal_waters"}},
+                      if key not in {"stage_qc", "structure_repair", "ligand_parameterization", "complex_inputs", "crystal_waters", "preparation_review"}},
             stages={
                 **reset_stages,
                 StageName.PREPARATION.value: prep,

@@ -1,7 +1,7 @@
 # Source, modification and rebuilding
 
-MolDynStudio v1.1.1 is GPL-3.0-only. The release provides the application source
-ZIP alongside the installers, at https://github.com/amgoncalvesusp/MolDynStudio/releases/tag/v1.1.1.
+MolDynStudio v1.3.0 is GPL-3.0-only. The release provides the application source
+ZIP alongside the installers, at https://github.com/amgoncalvesusp/MolDynStudio/releases/tag/v1.3.0.
 The matching Git tag includes the complete application and build/test scripts.
 No signing key or activation service is needed to run a modified version.
 
