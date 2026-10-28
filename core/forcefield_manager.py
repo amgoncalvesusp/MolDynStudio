@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
 import os
-from pathlib import Path
+import re
 import shutil
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
 import time
+from hashlib import sha256
+from pathlib import Path
 from typing import BinaryIO
+from urllib.error import URLError
 from urllib.request import urlopen
-
 
 CHARMM36_RELEASE = "feb2026_cgenff-5.0"
 CHARMM36_BASENAME = f"charmm36-{CHARMM36_RELEASE}"
@@ -231,20 +233,65 @@ def install_charmm36_archive(
     return destination
 
 
+def _download_with_curl(archive: Path, remaining: float) -> None:
+    executable = shutil.which("curl.exe" if sys.platform == "win32" else "curl")
+    if executable is None:
+        raise OSError("CHARMM36m download failed and curl is unavailable. Retry or import a local package.")
+    probe_started = time.monotonic()
+    try:
+        version = subprocess.run(
+            [executable, "--disable", "--version"], check=True, shell=False,
+            timeout=min(5, remaining), capture_output=True, text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("Cannot verify curl 8.4.0 or newer; update curl or import a local package.") from exc
+    match = re.match(r"curl (\d{1,3})\.(\d{1,3})\.(\d{1,3})(?=[\s+-]|$)", version.stdout)
+    # curl 8.4+ enforces the byte limit even without a Content-Length header.
+    if match is None or tuple(map(int, match.groups())) < (8, 4, 0):
+        raise RuntimeError("Use curl 8.4.0 or newer; update curl or import a local package.")
+    remaining -= time.monotonic() - probe_started
+    if remaining <= 0:
+        raise TimeoutError("CHARMM36m download timed out while checking curl. Retry or import a local package.")
+    archive.unlink(missing_ok=True)
+    try:
+        subprocess.run(
+            [executable, "--disable", "--silent", "--show-error", "--fail", "--location", "--http1.1",
+             "--proto", "=https", "--proto-redir", "=https",
+             "--connect-timeout", str(min(30, remaining)), "--max-time", str(remaining),
+             "--max-filesize", str(MAX_DOWNLOAD_BYTES), "--output", str(archive), "--", CHARMM36_URL],
+            check=True, shell=False, timeout=remaining, capture_output=True, text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        detail = exc.stderr if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
+        raise RuntimeError(f"CHARMM36m HTTPS fallback failed: {detail}. Retry or import a local package.") from exc
+    if archive.stat().st_size > MAX_DOWNLOAD_BYTES:
+        raise ValueError("CHARMM36m download exceeds the size limit.")
+
+
 def download_charmm36_force_field(*, cache_root: Path | None = None) -> Path:
     """Explicit first-use download; simulations themselves remain offline."""
     with tempfile.TemporaryDirectory(prefix="moldynstudio-charmm-download-") as tmp:
         archive = Path(tmp) / CHARMM36_ARCHIVE_NAME
         deadline = time.monotonic() + 120
-        with urlopen(CHARMM36_URL, timeout=30) as response, archive.open("wb") as output:
-            total = 0
-            while chunk := response.read(64 * 1024):
-                if time.monotonic() > deadline:
-                    raise TimeoutError("CHARMM36m download timed out. Retry or import a local package.")
-                total += len(chunk)
-                if total > MAX_DOWNLOAD_BYTES:
-                    raise ValueError("CHARMM36m download exceeds the size limit.")
-                output.write(chunk)
+        try:
+            with urlopen(CHARMM36_URL, timeout=30) as response, archive.open("wb") as output:
+                total = 0
+                while chunk := response.read(64 * 1024):
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("CHARMM36m download timed out. Retry or import a local package.")
+                    total += len(chunk)
+                    if total > MAX_DOWNLOAD_BYTES:
+                        raise ValueError("CHARMM36m download exceeds the size limit.")
+                    output.write(chunk)
+        except (TimeoutError, ConnectionResetError, URLError) as exc:
+            if isinstance(exc, URLError) and not isinstance(exc.reason, (TimeoutError, ConnectionResetError)):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            _download_with_curl(archive, remaining)
         return install_charmm36_archive(archive, cache_root=cache_root)
 
 

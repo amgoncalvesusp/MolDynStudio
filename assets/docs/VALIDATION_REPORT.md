@@ -357,6 +357,35 @@ clean-checkout CI collects 783 application cases. Build- and publication-specifi
 results belong to the GitHub release notes and versioned provenance/checksum
 assets, rather than the earlier historical bundle checks in this document.
 
+## CHARMM download compatibility — 28 October 2026
+
+Release CI exposed HTTPS handshake timeouts in the official CHARMM download
+through Python's transport. Both platform application/packaging jobs passed;
+the separate real-GROMACS job correctly failed at that external download.
+The downloader now handles only timeout/reset failures with an optional system
+curl 8.4.0+ HTTP/1.1 fallback. TLS certificate verification and HTTPS-only
+redirects remain required; the original deadline, size limit, SHA-256, and
+force-field-tree validation remain enforced. Older or malformed curl clients
+are rejected before transfer. Certificate, HTTP, and validation errors do not
+trigger a fallback.
+
+The focused force-field/setup suite passed 50 tests and 21 subtests. Both
+modified download functions reached 100% statement and branch coverage.
+Independent general/security/Python review approved the final controls.
+Windows' public download API installed the exact supported archive after a
+transient Python connection failure. Linux also passed the four-test opt-in
+GROMACS 2025.4 module, including fresh CHARMM download, preparation, minimization,
+and the separate tiny-system grompp/mdrun test. No force-field archive is
+redistributed in the application or release sources.
+
+Final post-compatibility suites collected 803 local cases: Windows passed
+801 tests/249 subtests with two skips and 85.88% statement coverage; Linux passed
+797 tests/242 subtests with six skips and 85.58% coverage. The published
+application scope contains 797 cases after excluding the six project-data
+checks. Both platforms passed all six runtime probes. Fresh public downloads
+with the curl version guard passed on Windows and Linux; Linux source hashes
+were unchanged during the final suite and download validation.
+
 ## Limits relevant to publication and use
 
 The short synthetic simulations and the complete 6D15 execution check verify execution and file interoperability. They do not validate biological conclusions, equilibrium sampling, binding affinity, force-field suitability for arbitrary chemistry, or long-run performance. A publication still needs openly described test systems, independent replicates where applicable, uncertainty analysis, and comparisons against established workflows.

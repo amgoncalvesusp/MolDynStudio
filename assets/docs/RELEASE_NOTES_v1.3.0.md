@@ -20,6 +20,10 @@ without replacing the existing GROMACS workflow or adding a second renderer.
   require an explicit row choice; busy operations report rejected requests.
 - Windows XTC/TRR readers use a verified ASCII short-path alias when available
   for Unicode paths. Original paths, hashes, and export provenance are retained.
+- CHARMM installation recovers from Python HTTPS timeout/reset failures through
+  system curl 8.4.0+ using HTTP/1.1. Certificate verification, HTTPS redirects,
+  the shared deadline, byte limit, and exact archive/tree checks stay enabled.
+  Other download or validation failures remain explicit.
 
 ## Dependency security
 
@@ -32,13 +36,16 @@ license/source manifest; Linux resolves compatible versions during installation.
 
 ## Validation before publication
 
-- Windows: 787 tests and 228 subtests passed; two opt-in engine tests skipped.
-  Configured statement coverage: 85.81%; six runtime checks passed.
-- Linux/WSL2: 783 tests and 221 subtests passed; six tests skipped (two opt-in
-  engine checks and four Windows-specific checks). Statement coverage: 85.51%;
+- Windows: 801 tests and 249 subtests passed; two opt-in engine tests skipped.
+  Configured statement coverage: 85.88%; six runtime checks passed.
+- Linux/WSL2: 797 tests and 242 subtests passed; six tests skipped (two opt-in
+  engine checks and four Windows-specific checks). Statement coverage: 85.58%;
   six runtime checks passed.
 - Local discovery included six existing project verification cases outside the
-  published source. The clean release checkout therefore contains 783 cases.
+  published source. The clean release checkout therefore contains 797 cases.
+- The separate four-test real GROMACS 2025.4 module passed, including a fresh
+  official CHARMM download, preparation, and minimization. The final public
+  downloader also passed with the curl version guard on Windows and Linux.
 - Real 6D15 analyses generated 11 RMSD points, 270 C-alpha RMSF points, and 11
   radius-of-gyration points. GUI journeys selected frame 10 at 2 ps, highlighted
   CYS46 by source residue index 45, and preserved same-frame export coordinates

@@ -280,6 +280,13 @@ With `refcoord-scaling = com`, GROMACS scales a single center of mass for all re
 
 Download/import is an explicit installation action. Simulation preparation does not silently retrieve a different protein force field. The supported local archive is `charmm36-feb2026_cgenff-5.0.ff.tgz`. Its included residue parameters and the separate SwissParam MATCH ligand service have distinct provenance; installing the archive alone does not parameterize a ligand [7].
 
+If the Python HTTPS connection times out or is reset, the downloader can retry
+through system curl 8.4.0+ using HTTP/1.1. Certificate verification, HTTPS-only
+redirects, the shared download deadline, the 25 MiB limit, and the original
+archive/tree checks remain enabled. If a suitable curl is unavailable, update
+the system client or use **Import package…**. Certificate, HTTP, and checksum
+errors are not bypassed. See the [curl size-limit documentation](https://curl.se/docs/manpage.html#--max-filesize).
+
 ### 4.5. Prepare a noncovalent ligand with CHARMM36m and MATCH
 
 This route submits a reviewed MOL2 to **SwissParam MATCH (CGenFF-derived)** and converts its returned CHARMM parameters locally with ParmEd. MATCH assigns parameters by chemical analogy [23, 24]. A successful response therefore needs chemical and force-field review; it is not an experimental validation of the ligand or its protonation state. The selected approach is MATCH, not SwissParam's separate MMFF-based method.
